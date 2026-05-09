@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.6.0
+
+### New Feature: Voyager 支持 resolve/post/expose/send 元信息显示
+
+Voyager 新增 `Pydantic Resolve Meta` 开关，开启后可在 DTO 字段上显示 `● resolve`、`● post`、`● expose as`、`● send to`、`● collectors` 彩色标记，直观呈现 Core API 模式的数据流设计。
+
+**检测内容：**
+- `resolve_*` 方法和 `AutoLoad` 注解 → resolve 标记
+- `post_*` 方法 → post 标记
+- `ExposeAs` 注解 → expose as 标记
+- `SendTo` 注解 → send to 标记
+- `Collector` 参数 → collectors 标记
+
+**Changes:**
+
+- `voyager/type_helper.py`: 新增 `analysis_pydantic_resolve_fields()` 函数，修改 `get_pydantic_fields()` 调用它
+- `voyager/type.py`: `CoreData` 新增 `show_pydantic_resolve_meta` 字段
+- `voyager/use_case_voyager.py`: `render_dot()` 和 `dump_core_data()` 传递 flag 到 Renderer
+- `voyager/voyager_context.py`: `get_option_param()` 动态检测元数据；`get_filtered_dot()` / `get_core_data()` / `render_dot_from_core_data()` 传递 flag
+
 ## 1.5.0
 
 ### Breaking Change: UseCase 方法必须使用 `@query` / `@mutation` 装饰器
