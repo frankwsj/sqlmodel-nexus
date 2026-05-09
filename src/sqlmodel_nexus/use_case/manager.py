@@ -36,6 +36,7 @@ class UseCaseResources:
     context_extractor: Callable[[Any], dict | Awaitable[dict]] | None = field(
         default=None
     )
+    enable_mutation: bool = True
 
     @property
     def service_names(self) -> set[str]:
@@ -97,6 +98,7 @@ class UseCaseManager:
             introspector=introspector,
             services=service_map,
             context_extractor=config.context_extractor,
+            enable_mutation=config.enable_mutation,
         )
 
     def _register_app(self, resources: UseCaseResources) -> None:

@@ -49,6 +49,7 @@ def query(func: Callable) -> classmethod:
         ```
     """
     func._graphql_query = True  # type: ignore[attr-defined]
+    func._graphql_query_description = (func.__doc__.strip() if func.__doc__ else "")  # type: ignore[attr-defined]
     return classmethod(func)
 
 
@@ -97,4 +98,5 @@ def mutation(func: Callable) -> classmethod:
         ```
     """
     func._graphql_mutation = True  # type: ignore[attr-defined]
+    func._graphql_mutation_description = (func.__doc__.strip() if func.__doc__ else "")  # type: ignore[attr-defined]
     return classmethod(func)

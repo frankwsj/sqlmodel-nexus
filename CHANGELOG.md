@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.5.0
+
+### Breaking Change: UseCase 方法必须使用 `@query` / `@mutation` 装饰器
+
+`UseCaseService` 的方法不再自动收集裸 `@classmethod`。必须使用 `@query` 或 `@mutation` 装饰器标记方法，才会被 `BusinessMeta` 元类发现并暴露为 MCP 工具。
+
+**迁移：**
+
+```python
+# Before (1.4.0)
+class UserService(UseCaseService):
+    @classmethod
+    async def list_users(cls) -> list[UserDTO]:
+        ...
+
+# After (1.5.0)
+from sqlmodel_nexus import query, mutation
+
+class UserService(UseCaseService):
+    @query
+    async def list_users(cls) -> list[UserDTO]:
+        ...
+
+    @mutation
+    async def create_user(cls, name: str) -> UserDTO:
+        ...
+```
+
+### New Features
+
+- **`@query` / `@mutation` 装饰器** — `UseCaseService` 方法必须显式标记类型，`__use_case_methods__` 存储完整元数据（`method`, `kind`, `description`）
+- **`enable_mutation` 参数** — `UseCaseAppConfig` 新增 `enable_mutation: bool = True`，控制 mutation 方法的可见性
+- **三层 mutation 过滤** — 当 `enable_mutation=False` 时，`list_services`（方法计数）、`describe_service`（方法列表）、`call_use_case`（执行拦截）均过滤 mutation
+- **`kind` 字段** — `describe_service` 输出的方法信息中包含 `kind` 字段（`"query"` 或 `"mutation"`）
+- **`description` 属性** — `@query`/`@mutation` 装饰器自动提取 docstring 作为 description
+
+### Changes
+
+- `decorator.py`: `query()` / `mutation()` 增加 `_graphql_query_description` / `_graphql_mutation_description` 属性
+- `use_case/business.py`: `BusinessMeta` 只收集有装饰器标记的方法，`__use_case_methods__` 值类型从 `dict[str, Any]` 变为 `dict[str, dict[str, Any]]`
+- `use_case/types.py`: `UseCaseAppConfig` 新增 `enable_mutation` 字段
+- `use_case/manager.py`: `UseCaseResources` 新增 `enable_mutation` 字段并从 config 传递
+- `use_case/introspector.py`: `describe_service()` 方法信息增加 `kind` 字段
+- `use_case/server.py`: 三层 `enable_mutation` 过滤逻辑
+
 ## 1.4.0
 
 ### Breaking Change: Remove `RpcServiceConfig`

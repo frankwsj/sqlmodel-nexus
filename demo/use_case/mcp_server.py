@@ -23,6 +23,8 @@ from sqlmodel_nexus import (
     UseCaseService,
     build_dto_select,
     create_use_case_mcp_server,
+    mutation,
+    query,
 )
 
 # ──────────────────────────────────────────────────
@@ -44,7 +46,7 @@ Resolver = er.create_resolver()
 class UserService(UseCaseService):
     """User management — query users."""
 
-    @classmethod
+    @query
     async def list_users(cls) -> list[dict]:
         """Get all users as simple dicts."""
         from sqlmodel import select
@@ -57,7 +59,7 @@ class UserService(UseCaseService):
 class TaskService(UseCaseService):
     """Task management — query tasks with auto-loaded owner."""
 
-    @classmethod
+    @query
     async def list_tasks(cls) -> list[TaskSummary]:
         """Get all tasks with their owner (auto-loaded via DataLoader)."""
         stmt = build_dto_select(TaskSummary)
@@ -66,7 +68,7 @@ class TaskService(UseCaseService):
         dtos = [TaskSummary(**dict(row._mapping)) for row in rows]
         return await Resolver().resolve(dtos)
 
-    @classmethod
+    @query
     async def get_tasks_by_sprint(cls, sprint_id: int) -> list[TaskSummary]:
         """Get tasks for a specific sprint, with owner auto-loaded."""
         stmt = build_dto_select(TaskSummary, where=Task.sprint_id == sprint_id)
@@ -75,7 +77,7 @@ class TaskService(UseCaseService):
         dtos = [TaskSummary(**dict(row._mapping)) for row in rows]
         return await Resolver().resolve(dtos)
 
-    @classmethod
+    @query
     async def get_task(cls, task_id: int) -> TaskSummary | None:
         """Get a single task by ID."""
         stmt = build_dto_select(TaskSummary, where=Task.id == task_id)
@@ -90,7 +92,7 @@ class TaskService(UseCaseService):
 class SprintService(UseCaseService):
     """Sprint management — query sprints with task statistics."""
 
-    @classmethod
+    @query
     async def list_sprints(cls) -> list[SprintSummary]:
         """Get all sprints with task counts and contributor names.
 
@@ -105,7 +107,7 @@ class SprintService(UseCaseService):
         dtos = [SprintSummary(**dict(row._mapping)) for row in rows]
         return await Resolver().resolve(dtos)
 
-    @classmethod
+    @query
     async def get_sprint(cls, sprint_id: int) -> SprintSummary | None:
         """Get a single sprint by ID with full details."""
         stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
@@ -116,7 +118,7 @@ class SprintService(UseCaseService):
         dto = SprintSummary(**dict(rows[0]._mapping))
         return await Resolver().resolve(dto)
 
-    @classmethod
+    @query
     async def get_sprint_detail(cls, sprint_id: int) -> SprintDetail | None:
         """Get sprint with cross-layer data flow (ExposeAs + SendTo + Collector).
 

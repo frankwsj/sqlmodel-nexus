@@ -7,6 +7,7 @@ import json
 import pytest
 from pydantic import BaseModel
 
+from sqlmodel_nexus.decorator import mutation, query
 from sqlmodel_nexus.use_case.business import UseCaseService
 from sqlmodel_nexus.use_case.introspector import (
     ServiceIntrospector,
@@ -39,19 +40,19 @@ class TaskDTO(BaseModel):
 class UserService(UseCaseService):
     """User management service."""
 
-    @classmethod
+    @query
     async def list_users(cls) -> list[UserDTO]:
         """Get all users."""
         return [UserDTO(id=1, name="Alice"), UserDTO(id=2, name="Bob")]
 
-    @classmethod
+    @query
     async def get_user(cls, user_id: int) -> UserDTO | None:
         """Get a user by ID."""
         if user_id == 1:
             return UserDTO(id=1, name="Alice")
         return None
 
-    @classmethod
+    @mutation
     async def create_user(cls, name: str, email: str) -> UserDTO:
         """Create a new user."""
         return UserDTO(id=99, name=name)
@@ -60,7 +61,7 @@ class UserService(UseCaseService):
 class TaskService(UseCaseService):
     """Task management service."""
 
-    @classmethod
+    @query
     async def list_tasks(cls) -> list[TaskDTO]:
         """Get all tasks."""
         return [
@@ -69,13 +70,23 @@ class TaskService(UseCaseService):
 
     @classmethod
     async def _internal_helper(cls) -> str:
-        """This should NOT be exposed."""
+        """This should NOT be exposed (no @query/@mutation)."""
         return "private"
 
     @classmethod
+    async def bare_classmethod(cls) -> str:
+        """This should NOT be discovered (no @query/@mutation decorator)."""
+        return "bare"
+
+    @query
     async def get_task(cls, task_id: int, include_owner: bool = True) -> TaskDTO | None:
         """Get a task by ID."""
         return TaskDTO(id=task_id, title="Test Task")
+
+    @mutation
+    async def delete_task(cls, task_id: int) -> bool:
+        """Delete a task."""
+        return True
 
 
 # ──────────────────────────────────────────────────
@@ -84,15 +95,38 @@ class TaskService(UseCaseService):
 
 
 class TestUseCaseService:
-    def test_discovers_async_classmethods(self):
-        """Public async classmethods are discovered."""
+    def test_discovers_query_methods(self):
+        """Methods with @query are discovered."""
         assert "list_users" in UserService.__use_case_methods__
         assert "get_user" in UserService.__use_case_methods__
+
+    def test_discovers_mutation_methods(self):
+        """Methods with @mutation are discovered."""
         assert "create_user" in UserService.__use_case_methods__
+
+    def test_method_has_kind(self):
+        """Discovered methods have correct kind."""
+        assert UserService.__use_case_methods__["list_users"]["kind"] == "query"
+        assert UserService.__use_case_methods__["create_user"]["kind"] == "mutation"
+
+    def test_method_has_description(self):
+        """Discovered methods have description from docstring."""
+        assert (
+            UserService.__use_case_methods__["list_users"]["description"]
+            == "Get all users."
+        )
+        assert (
+            UserService.__use_case_methods__["create_user"]["description"]
+            == "Create a new user."
+        )
 
     def test_excludes_private_methods(self):
         """Methods starting with _ are excluded."""
         assert "_internal_helper" not in TaskService.__use_case_methods__
+
+    def test_excludes_bare_classmethods(self):
+        """Methods without @query/@mutation are not discovered."""
+        assert "bare_classmethod" not in TaskService.__use_case_methods__
 
     def test_excludes_get_tag_name(self):
         """get_tag_name is excluded from use case methods."""
@@ -168,10 +202,10 @@ class TestServiceIntrospector:
 
         user_svc = next(s for s in services if s["name"] == "UserService")
         assert user_svc["description"] == "User management service."
-        assert user_svc["methods_count"] == 3
+        assert user_svc["methods_count"] == 3  # list_users + get_user + create_user
 
         task_svc = next(s for s in services if s["name"] == "TaskService")
-        assert task_svc["methods_count"] == 2  # list_tasks + get_task (excludes _internal)
+        assert task_svc["methods_count"] == 3  # list_tasks + get_task + delete_task
 
     def test_describe_service_methods(self):
         introspector = _make_introspector()
@@ -179,6 +213,18 @@ class TestServiceIntrospector:
         assert info is not None
         assert info["name"] == "UserService"
         assert len(info["methods"]) == 3
+
+    def test_describe_service_method_kind(self):
+        """Methods include kind field in describe output."""
+        introspector = _make_introspector()
+        info = introspector.describe_service("UserService")
+        assert info is not None
+
+        list_users = next(m for m in info["methods"] if m["name"] == "list_users")
+        assert list_users["kind"] == "query"
+
+        create_user = next(m for m in info["methods"] if m["name"] == "create_user")
+        assert create_user["kind"] == "mutation"
 
     def test_describe_service_signatures(self):
         introspector = _make_introspector()
@@ -261,6 +307,20 @@ def _make_mcp_server():
     )
 
 
+def _make_mcp_server_no_mutation():
+    return create_use_case_mcp_server(
+        apps=[
+            UseCaseAppConfig(
+                name=APP_NAME,
+                services=[UserService, TaskService],
+                description="Test app",
+                enable_mutation=False,
+            ),
+        ],
+        name="Test UseCase API",
+    )
+
+
 class TestUseCaseMcpServer:
     @pytest.fixture
     def mcp_server(self):
@@ -308,6 +368,23 @@ class TestUseCaseMcpServer:
         assert len(data["data"]["methods"]) == 3
         # Check that types field has SDL
         assert "type UserDTO" in data["data"]["types"]
+
+    @pytest.mark.asyncio
+    async def test_describe_service_method_kind(self, mcp_server):
+        """describe_service methods include kind field."""
+        result = await mcp_server.call_tool(
+            "describe_service",
+            {"app_name": APP_NAME, "service_name": "UserService"},
+        )
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+
+        methods = data["data"]["methods"]
+        list_users = next(m for m in methods if m["name"] == "list_users")
+        assert list_users["kind"] == "query"
+
+        create_user = next(m for m in methods if m["name"] == "create_user")
+        assert create_user["kind"] == "mutation"
 
     @pytest.mark.asyncio
     async def test_describe_service_not_found(self, mcp_server):
@@ -458,3 +535,72 @@ class TestUseCaseMcpServer:
         )
         data = json.loads(result.content[0].text)
         assert data["success"] is False
+
+
+# ──────────────────────────────────────────────────
+# Tests: enable_mutation filtering
+# ──────────────────────────────────────────────────
+
+
+class TestEnableMutation:
+    @pytest.fixture
+    def mcp_server_no_mutation(self):
+        return _make_mcp_server_no_mutation()
+
+    @pytest.mark.asyncio
+    async def test_list_services_filters_mutation_count(self, mcp_server_no_mutation):
+        """list_services hides mutation methods from count when enable_mutation=False."""
+        result = await mcp_server_no_mutation.call_tool("list_services", {"app_name": APP_NAME})
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+
+        user_svc = next(s for s in data["data"] if s["name"] == "UserService")
+        # Only 2 query methods, create_user (mutation) filtered out
+        assert user_svc["methods_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_describe_service_filters_mutations(self, mcp_server_no_mutation):
+        """describe_service hides mutation methods when enable_mutation=False."""
+        result = await mcp_server_no_mutation.call_tool(
+            "describe_service",
+            {"app_name": APP_NAME, "service_name": "UserService"},
+        )
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+
+        method_names = [m["name"] for m in data["data"]["methods"]]
+        assert "list_users" in method_names
+        assert "get_user" in method_names
+        assert "create_user" not in method_names  # mutation filtered
+
+    @pytest.mark.asyncio
+    async def test_call_mutation_blocked(self, mcp_server_no_mutation):
+        """call_use_case blocks mutation methods when enable_mutation=False."""
+        result = await mcp_server_no_mutation.call_tool(
+            "call_use_case",
+            {
+                "app_name": APP_NAME,
+                "service_name": "UserService",
+                "method_name": "create_user",
+                "params": json.dumps({"name": "Test", "email": "test@test.com"}),
+            },
+        )
+        data = json.loads(result.content[0].text)
+        assert data["success"] is False
+        assert "mutation" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_call_query_still_works(self, mcp_server_no_mutation):
+        """call_use_case still allows query methods when enable_mutation=False."""
+        result = await mcp_server_no_mutation.call_tool(
+            "call_use_case",
+            {
+                "app_name": APP_NAME,
+                "service_name": "UserService",
+                "method_name": "list_users",
+                "params": "{}",
+            },
+        )
+        data = json.loads(result.content[0].text)
+        assert data["success"] is True
+        assert len(data["data"]) == 2
