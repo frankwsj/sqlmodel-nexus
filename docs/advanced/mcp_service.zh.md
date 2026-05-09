@@ -80,5 +80,5 @@ mcp.run(transport="sse", host="0.0.0.0", port=8003)
 
 ## 下一步
 
-- [RPC 服务](./rpc_service.zh.md) — 业务逻辑的 MCP + REST 双模式服务
+- [UseCase 服务](./use_case_service.zh.md) — 业务逻辑的 MCP + REST 双模式服务
 - [GraphQL 模式](../guide/graphql_mode.zh.md) — MCP 底层使用的 GraphQL API

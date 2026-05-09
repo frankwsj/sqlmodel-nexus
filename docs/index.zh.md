@@ -61,8 +61,8 @@ erDiagram
 | 页面 | 主题 |
 |---|---|
 | [MCP 服务](./advanced/mcp_service.zh.md) | 将 SQLModel API 暴露给 AI 代理 |
-| [RPC 服务](./advanced/rpc_service.zh.md) | 定义业务服务，同时服务于 MCP 和 REST |
-| [RPC + FastAPI](./advanced/rpc_fastapi.zh.md) | 同一服务类嵌入 FastAPI 路由 |
+| [UseCase 服务](./advanced/use_case_service.zh.md) | 定义业务服务，同时服务于 MCP 和 REST |
+| [UseCase + FastAPI](./advanced/use_case_fastapi.zh.md) | 同一服务类嵌入 FastAPI 路由 |
 | [Voyager 可视化](./advanced/voyager.zh.md) | 交互式 ERD 浏览 |
 
 ### API 参考
@@ -72,4 +72,4 @@ erDiagram
 - [跨层数据流](./api/api_cross_layer.zh.md) — ExposeAs / SendTo / Collector
 - [关系与 ER 图](./api/api_relationship.zh.md) — Relationship / ErDiagram
 - [MCP API](./api/api_mcp.zh.md) — MCP 服务配置
-- [RPC API](./api/api_rpc.zh.md) — RpcService / create_rpc_mcp_server
+- [UseCase API](./api/api_use_case.zh.md) — UseCaseService / create_use_case_mcp_server

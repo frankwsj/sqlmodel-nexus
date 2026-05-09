@@ -54,17 +54,20 @@ GitHub、GitLab 和大多数 Markdown 渲染器都支持 Mermaid 语法。
 
 ## 方式二：Voyager 交互式可视化
 
-sqlmodel-nexus 内置 Voyager 模块，提供基于 Web 的交互式可视化，同时展示 RPC 服务结构和 ER 实体关系。
+sqlmodel-nexus 内置 Voyager 模块，提供基于 Web 的交互式可视化，同时展示 UseCase 服务结构和 ER 实体关系。
 
 ### 快速开始
 
 ```python
-from sqlmodel_nexus.rpc import create_rpc_voyager
+from sqlmodel_nexus.voyager import create_use_case_voyager
+from sqlmodel_nexus.use_case import UseCaseAppConfig
 from fastapi import FastAPI
 
 # 创建 Voyager 应用
-voyager = create_rpc_voyager(
-    services=[SprintService, TaskService],
+voyager = create_use_case_voyager(
+    apps=[
+        UseCaseAppConfig(name="project", services=[SprintService, TaskService]),
+    ],
     er_manager=er,  # 可选：集成 ER 图
 )
 
@@ -77,7 +80,7 @@ app.mount("/voyager", voyager)
 
 ### 功能
 
-- **服务图**：展示 RpcService 方法及其 DTO 依赖关系
+- **服务图**：展示 UseCaseService 方法及其 DTO 依赖关系
 - **ER 图**：展示 SQLModel 实体关系（ORM + 自定义）
 - **DOT 渲染**：Graphviz 格式的关系图
 - **交互式浏览**：搜索、过滤、缩放

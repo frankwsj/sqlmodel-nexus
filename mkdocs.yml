@@ -66,8 +66,8 @@ nav:
     - ER Diagram Visualization: ./guide/er_diagram_visual.md
   - Advanced:
     - MCP Service: ./advanced/mcp_service.md
-    - RPC Service: ./advanced/rpc_service.md
-    - RPC + FastAPI: ./advanced/rpc_fastapi.md
+    - UseCase Service: ./advanced/use_case_service.md
+    - UseCase + FastAPI: ./advanced/use_case_fastapi.md
     - Voyager Visualization: ./advanced/voyager.md
   - API Reference:
     - GraphQLHandler: ./api/api_graphql_handler.md
@@ -75,7 +75,7 @@ nav:
     - Cross-Layer Data Flow: ./api/api_cross_layer.md
     - Relationships & ER Diagram: ./api/api_relationship.md
     - MCP API: ./api/api_mcp.md
-    - RPC API: ./api/api_rpc.md
+    - UseCase API: ./api/api_use_case.md
   - Reference:
     - Changelog: ./reference/changelog.md
     - Migration Guide: ./reference/migration.md
@@ -119,15 +119,15 @@ plugins:
             "Custom Relationships": "自定义关系"
             "ER Diagram Visualization": "ER 图可视化"
             "MCP Service": "MCP 服务"
-            "RPC Service": "RPC 服务"
-            "RPC + FastAPI": "RPC + FastAPI"
+            "UseCase Service": "UseCase 服务"
+            "UseCase + FastAPI": "UseCase + FastAPI"
             "Voyager Visualization": "Voyager 可视化"
             GraphQLHandler: "GraphQLHandler"
             "Core API": "Core API"
             "Cross-Layer Data Flow": "跨层数据流"
             "Relationships & ER Diagram": "关系与 ER 图"
             "MCP API": "MCP API"
-            "RPC API": "RPC API"
+            "UseCase API": "UseCase API"
             Changelog: "变更记录"
             "Migration Guide": "迁移指南"
 

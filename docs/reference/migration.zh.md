@@ -1,6 +1,65 @@
 # 迁移指南
 
-## 1.3.x → 1.4.0: RpcServiceConfig 移除
+## rpc → use_case 重构（当前版本）
+
+RPC 模块已全面重构为 UseCase 模式。主要变化：
+
+| 旧名称 | 新名称 |
+|--------|--------|
+| `RpcService` | `UseCaseService` |
+| `create_rpc_mcp_server` | `create_use_case_mcp_server` |
+| `create_rpc_voyager` | `create_use_case_voyager` |
+| `RpcVoyager` | `UseCaseVoyager` |
+
+### MCP 工具变化
+
+从三层改为四层，增加 `list_apps` 层支持多应用管理：
+
+| 旧工具 | 新工具 |
+|--------|--------|
+| `list_services()` | `list_apps()` → `list_services(app_name)` |
+| `describe_service(service_name)` | `describe_service(app_name, service_name)` |
+| `call_rpc(service_name, method_name, params)` | `call_use_case(app_name, service_name, method_name, params)` |
+
+### 代码迁移
+
+```python
+# Before (rpc)
+from sqlmodel_nexus.rpc import RpcService, create_rpc_mcp_server
+
+class SprintService(RpcService):
+    ...
+
+mcp = create_rpc_mcp_server(
+    services=[SprintService, TaskService],
+    name="Project API",
+)
+
+# After (use_case)
+from sqlmodel_nexus.use_case import UseCaseService, UseCaseAppConfig, create_use_case_mcp_server
+
+class SprintService(UseCaseService):
+    ...
+
+mcp = create_use_case_mcp_server(
+    apps=[
+        UseCaseAppConfig(
+            name="project",
+            services=[SprintService, TaskService],
+            description="Project management",
+        ),
+    ],
+    name="Project UseCase API",
+)
+```
+
+### 新功能
+
+- **多应用管理**：通过 `UseCaseAppConfig` 组织多个应用
+- **FromContext**：支持从 MCP 上下文注入参数
+- **大小写不敏感查找**：app_name 查找不区分大小写
+
+## 1.3.x → 1.4.0: RpcServiceConfig 移除（历史）
 
 `create_rpc_mcp_server` 和 `create_rpc_voyager` 不再接受 `RpcServiceConfig` 配置字典，直接传 `RpcService` 子类列表。
 

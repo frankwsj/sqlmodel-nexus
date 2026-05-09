@@ -2,11 +2,17 @@
 
 ## 1.4.0
 
-### Breaking Change: 移除 `RpcServiceConfig`
+### Breaking Change: rpc → use_case 重构
 
-`RpcServiceConfig` TypedDict 已移除。`create_rpc_mcp_server` 和 `create_rpc_voyager` 现在直接接受 `RpcService` 子类列表。
+`RpcService` → `UseCaseService`，`create_rpc_mcp_server` → `create_use_case_mcp_server`，`create_rpc_voyager` → `create_use_case_voyager`。
 
-- 服务名称从 `cls.__name__` 派生（如 `TaskService` → `"TaskService"`）
+新增四层 MCP 工具（`list_apps` → `list_services` → `describe_service` → `call_use_case`），支持多应用管理（`UseCaseAppConfig`）和上下文注入（`FromContext`）。
+
+### Breaking Change: 移除 `RpcServiceConfig`（历史）
+
+`RpcServiceConfig` TypedDict 已移除。服务直接接受子类列表。
+
+- 服务名称从 `cls.__name__` 派生
 - 服务描述从 `cls.__doc__` 派生
 
 ## 1.3.3

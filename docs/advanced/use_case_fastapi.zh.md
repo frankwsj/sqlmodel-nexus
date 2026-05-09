@@ -1,6 +1,6 @@
-# RPC + FastAPI
+# UseCase + FastAPI
 
-同一 RpcService 类在 FastAPI 中的使用——路由是薄包装器，业务逻辑留在服务中。
+同一 UseCaseService 类在 FastAPI 中的使用——路由是薄包装器，业务逻辑留在服务中。
 
 ## 路由定义
 
@@ -23,11 +23,11 @@ async def get_sprint(sprint_id: int):
 
 ## OpenAPI 分组
 
-`get_tag_name()` 返回 OpenAPI 兼容的标签名：
+`get_tag_name()` 返回类名作为 OpenAPI 兼容的标签名：
 
 ```python
-SprintService.get_tag_name()  # → "sprint"
-TaskService.get_tag_name()    # → "task"
+SprintService.get_tag_name()  # → "SprintService"
+TaskService.get_tag_name()    # → "TaskService"
 ```
 
 FastAPI 的 `/docs` 页面会按服务标签自动分组路由。
@@ -35,8 +35,8 @@ FastAPI 的 `/docs` 页面会按服务标签自动分组路由。
 ## 架构优势
 
 ```
-RpcService 子类 ──┬── MCP server（AI 代理）
-                  └── FastAPI routes（REST API）
+UseCaseService 子类 ──┬── MCP server（AI 代理）
+                      └── FastAPI routes（REST API）
 ```
 
 - **业务逻辑单一定义**：修改只需改一处
@@ -48,10 +48,10 @@ RpcService 子类 ──┬── MCP server（AI 代理）
 
 ```python
 from fastapi import FastAPI
-from sqlmodel_nexus.rpc import RpcService, create_rpc_mcp_server
+from sqlmodel_nexus.use_case import UseCaseService, UseCaseAppConfig, create_use_case_mcp_server
 
 # 服务定义
-class SprintService(RpcService):
+class SprintService(UseCaseService):
     @classmethod
     async def list_sprints(cls) -> list[SprintSummary]:
         ...
@@ -61,7 +61,12 @@ class SprintService(RpcService):
         ...
 
 # MCP 模式
-mcp = create_rpc_mcp_server(services=[SprintService], name="Sprint API")
+mcp = create_use_case_mcp_server(
+    apps=[
+        UseCaseAppConfig(name="project", services=[SprintService]),
+    ],
+    name="Sprint API",
+)
 
 # FastAPI 模式
 app = FastAPI()
@@ -80,5 +85,5 @@ async def get_sprint(sprint_id: int):
 
 ## 下一步
 
-- [RPC 服务](./rpc_service.zh.md) — RpcService 的完整定义方式
+- [UseCase 服务](./use_case_service.zh.md) — UseCaseService 的完整定义方式
 - [Core API 模式](../guide/core_api.zh.md) — DTO 定义和 resolve 模式

@@ -1,22 +1,22 @@
-# RPC 服务
+# UseCase 服务
 
-RpcService 让你将业务逻辑定义为服务类，同时服务于 MCP 和 Web 框架——一个定义，两种呈现。
+UseCaseService 让你将业务逻辑定义为服务类，同时服务于 MCP 和 Web 框架——一个定义，两种呈现。
 
 ## 设计理念
 
 ```
-RpcService 子类 ──┬── MCP server（AI 代理，渐进式发现）
-                  └── FastAPI routes（REST API，OpenAPI 文档）
+UseCaseService 子类 ──┬── MCP server（AI 代理，四层渐进式发现）
+                      └── FastAPI routes（REST API，OpenAPI 文档）
 ```
 
-## 定义 RpcService
+## 定义 UseCaseService
 
-`RpcService` 子类声明 `async classmethod` 方法。元类自动发现公共方法：
+`UseCaseService` 子类声明 `async classmethod` 方法。元类自动发现公共方法：
 
 ```python
-from sqlmodel_nexus.rpc import RpcService
+from sqlmodel_nexus.use_case import UseCaseService
 
-class SprintService(RpcService):
+class SprintService(UseCaseService):
     """Sprint 管理服务。"""
 
     @classmethod
@@ -42,17 +42,20 @@ class SprintService(RpcService):
 
 ## 暴露到 MCP
 
-三层渐进式发现：发现 → 检查 → 执行。
+四层渐进式发现：应用发现 → 服务列表 → 方法详情 → 执行。
 
 ```python
-from sqlmodel_nexus.rpc import create_rpc_mcp_server
+from sqlmodel_nexus.use_case import UseCaseAppConfig, create_use_case_mcp_server
 
-mcp = create_rpc_mcp_server(
-    services=[
-        SprintService,
-        TaskService,
+mcp = create_use_case_mcp_server(
+    apps=[
+        UseCaseAppConfig(
+            name="project",
+            services=[SprintService, TaskService],
+            description="Project management",
+        ),
     ],
-    name="Project RPC API",
+    name="Project UseCase API",
 )
 mcp.run()  # stdio 模式
 ```
@@ -61,15 +64,16 @@ mcp.run()  # stdio 模式
 
 | 工具 | 用途 |
 |------|------|
-| `list_services()` | 发现可用服务和方法数量 |
-| `describe_service(service_name)` | 方法签名（SDL 格式）+ DTO 类型定义 |
-| `call_rpc(service_name, method_name, params)` | 执行方法 |
+| `list_apps()` | 发现可用应用 |
+| `list_services(app_name)` | 列出应用中的服务和方法数量 |
+| `describe_service(app_name, service_name)` | 方法签名（SDL 格式）+ DTO 类型定义 |
+| `call_use_case(app_name, service_name, method_name, params)` | 执行方法 |
 
 ### describe_service 输出
 
 ```json
 {
-  "name": "sprint",
+  "name": "SprintService",
   "methods": [
     {"name": "list_sprints", "signature_sdl": "list_sprints(): [SprintSummary!]!"},
     {"name": "get_sprint", "signature_sdl": "get_sprint(sprint_id: Int!): SprintSummary"}
@@ -80,5 +84,5 @@ mcp.run()  # stdio 模式
 
 ## 下一步
 
-- [RPC + FastAPI](./rpc_fastapi.zh.md) — 同一服务类嵌入 FastAPI
-- [MCP 服务](./mcp_service.zh.md) — 纯 MCP 集成（无 RPC）
+- [UseCase + FastAPI](./use_case_fastapi.zh.md) — 同一服务类嵌入 FastAPI
+- [MCP 服务](./mcp_service.zh.md) — 纯 MCP 集成（GraphQL 模式）
