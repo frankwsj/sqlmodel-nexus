@@ -93,7 +93,7 @@ class ErDiagramDotBuilder:
         self.node_set: dict[str, SchemaNode] = {}
         self.links: list[Link] = []
         self.link_set: set[tuple[str, str, str | None]] = set()
-        self.fk_set: dict[str, set[str]] = {}
+        self.rel_name_set: dict[str, dict[str, RelationshipInfo]] = {}
 
         self.show_field = show_fields
         self.show_module = show_module
@@ -109,11 +109,12 @@ class ErDiagramDotBuilder:
         entities = self.er_manager.get_all_entities()
         all_relationships = self.er_manager.get_all_relationships()
 
-        # Build FK set per entity
+        # Build relationship map per entity (replaces fk_set)
+        self.rel_name_set: dict[str, dict[str, RelationshipInfo]] = {}
         for entity_kls in entities:
             entity_name = full_class_name(entity_kls)
             rels = all_relationships.get(entity_kls, {})
-            self.fk_set[entity_name] = {rel.fk_field for rel in rels.values()}
+            self.rel_name_set[entity_name] = rels
 
         # Create SchemaNodes for each entity
         for entity_kls in entities:
@@ -144,20 +145,38 @@ class ErDiagramDotBuilder:
         return full_name
 
     def _get_entity_fields(self, entity_kls: type) -> list[FieldInfo]:
-        """Extract fields from an entity class's model_fields."""
+        """Extract fields from an entity class's model_fields and relationships."""
         full_name = full_class_name(entity_kls)
-        fk_fields = self.fk_set.get(full_name, set())
+        rels = self.rel_name_set.get(full_name, {})
+        rel_names = set(rels.keys())
 
         fields: list[FieldInfo] = []
+
+        # 1. Add regular model fields (skip relationship field names)
         for k, v in entity_kls.model_fields.items():
+            if k in rel_names:
+                continue
             anno = v.annotation
             fields.append(FieldInfo(
-                is_object=k in fk_fields,
+                is_object=False,
                 name=k,
                 from_base=False,
                 type_name=get_type_name(anno),
                 is_exclude=bool(v.exclude),
             ))
+
+        # 2. Add relationship fields (name + target type)
+        for rel_name, rel_info in rels.items():
+            target_type = rel_info.target_entity.__name__
+            type_name = f'list[{target_type}]' if rel_info.is_list else target_type
+            fields.append(FieldInfo(
+                is_object=True,
+                name=rel_name,
+                from_base=False,
+                type_name=type_name,
+                is_exclude=False,
+            ))
+
         return fields
 
     def _add_relationship_link(
@@ -176,8 +195,8 @@ class ErDiagramDotBuilder:
         cardinality = f'1 {ARROW} N' if rel_info.is_list else f'1 {ARROW} 1'
         label = f'{rel_info.name}\n{cardinality}'
 
-        # Build source anchor with FK field
-        source_anchor = f'{source_name}::f{rel_info.fk_field}'
+        # Build source anchor from relationship name field
+        source_anchor = f'{source_name}::f{rel_info.name}'
 
         # Check for duplicates
         biz = rel_info.name
