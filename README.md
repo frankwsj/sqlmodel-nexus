@@ -1,14 +1,16 @@
 # SQLModel Nexus
 
-Progressive SQLModel extension with visual ER diagrams.
+Build a codebase architecture that serves both humans and AI — from one model definition.
 
-Start from ORM entities, extend with non-ORM relationships, and generate GraphQL for interaction. Use `DefineSubset` to declaratively construct response DTOs — field selection, relationship loading, and derived fields all driven by declarations, not imperative code. Visualize your entity graph and data flow through interactive ER diagrams.
+Define SQLModel entities once, then progressively expose them through GraphQL (human validation), REST + OpenAPI (frontend delivery), and MCP (AI agent integration). Entity relationships, DataLoader batching, and response DTOs are all derived from the same model declarations — no duplication, no drift.
 
 ```mermaid
 flowchart LR
-    p1["P1: ER Diagram<br/>SQLModel entities + non-ORM relationships<br/>+ visual ER diagram<br/><hr>Focus: Business Modeling"]
-    --> p2["P2: GraphQL API<br/>@query / @mutation<br/>SDL auto-generation + DataLoader batching<br/><hr>Focus: Business Queries"]
-    --> p3["P3: Declarative Assembly<br/>DefineSubset DTOs + implicit auto-loading<br/>resolve_* / post_*<br/><hr>Focus: Use Case Construction"]
+    model["SQLModel<br/>Entities + Relationships"]
+    model --> gql["GraphQL<br/>@query / @mutation<br/>DataLoader batching"]
+    model --> rest["REST API<br/>DefineSubset DTOs<br/>OpenAPI spec"]
+    model --> mcp["MCP Server<br/>Progressive-disclosure<br/>AI agent tools"]
+    model --> viz["Voyager<br/>Interactive ER diagram<br/>Service visualization"]
 ```
 
 [![pypi](https://img.shields.io/pypi/v/sqlmodel-nexus.svg)](https://pypi.python.org/pypi/sqlmodel-nexus)
@@ -17,15 +19,18 @@ flowchart LR
 
 ## Why sqlmodel-nexus
 
-A model-driven development workflow — from LLM-assisted modeling to production API:
+One model → four consumption paths, zero duplication:
 
 ```
-SQLModel Entities → GraphQL (validation) → FastAPI Endpoints → openapi.json → TypeScript SDK
+SQLModel Entities ──┬── GraphQL (validate relationships & data shapes)
+                    ├── REST API (typed endpoints for frontend)
+                    ├── MCP Server (AI agent interaction)
+                    └── Voyager (visual ER diagram for team & AI)
 ```
 
-**GraphQL for validation, REST for delivery.**
+**GraphQL for validation, REST for delivery, MCP for AI.**
 
-During early development, GraphQL's flexible queries let you rapidly verify entity relationships and data shapes. When the model stabilizes, auto-generated FastAPI endpoints produce a typed REST API (OpenAPI spec), which feeds directly into TypeScript SDK generation for frontend integration.
+During early development, GraphQL's flexible queries let you rapidly verify entity relationships and data shapes. When the model stabilizes, `DefineSubset` DTOs produce N+1-safe FastAPI endpoints with OpenAPI specs for frontend integration. The same models feed MCP servers that give AI agents structured access to your API — progressive disclosure from schema discovery to method execution.
 
 | Stage | What you get |
 |-------|-------------|
@@ -33,8 +38,7 @@ During early development, GraphQL's flexible queries let you rapidly verify enti
 | Build REST APIs | `DefineSubset` DTOs + `ErManager` → N+1-safe FastAPI endpoints |
 | Deliver to Frontend | openapi.json → TypeScript SDK |
 | AI Integration | MCP server exposing the same models to AI assistants |
-
-> **Roadmap:** Auto-generation of FastAPI endpoints from the same SQLModel definitions is in progress. Today, GraphQL auto-generation and Core API (manual DTO) modes are production-ready.
+| Visualize | Voyager — interactive ER diagrams and service structure |
 
 ## Quick start
 
