@@ -570,11 +570,20 @@ uv run uvicorn demo.rpc_fastapi:app --port 8007
 
 ## Skill (Claude Code)
 
-本项目提供了一个 [Claude Code skill](./skill/) 用于四阶段渐进式开发。使用前创建软链接：
+A [Claude Code skill](./skill/) for progressive four-phase development — from requirements confirmation to production deployment. Create a symlink before use:
 
 ```bash
 ln -s $(pwd)/skill ~/.claude/skills/sqlmodel-nexus-4phase
 ```
+
+**Four phases:**
+
+| Phase | Focus | Output |
+|-------|-------|--------|
+| Phase 0 | Requirements confirmation | Entities, relationships, aggregates, use-case methods |
+| Phase 1 | Schema + ER Diagram + seed data | models + db + voyager |
+| Phase 2 | Method implementation + Entity mounting | service methods, GraphQL queryable |
+| Phase 3 | UseCase response assembly + MCP | DTOs + services + REST + MCP |
 
 ## License
 
