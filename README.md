@@ -57,8 +57,9 @@ bash start_all.sh
 | auth MCP | 8003 | http://localhost:8003/mcp |
 | multi-app MCP | 8004 | http://localhost:8004/mcp |
 | demo paginated | 8005 | http://localhost:8005/graphql |
-| demo RPC MCP | 8006 | http://localhost:8006/mcp |
-| demo RPC FastAPI | 8007 | http://localhost:8007/api/sprints |
+| demo UseCase MCP | 8006 | http://localhost:8006/mcp |
+| demo UseCase FastAPI | 8007 | http://localhost:8007/api/sprints |
+| demo Voyager | 8008 | http://localhost:8008/voyager |
 
 Press `Ctrl+C` to stop all services.
 
@@ -77,7 +78,7 @@ The concepts appear in this order on purpose:
 1. **GraphQL Mode** — the fastest path from SQLModel to a running API
 2. **Core API Mode** — DefineSubset DTOs for REST endpoints, progressing from implicit auto-loading to `resolve_*`, `post_*`, and cross-layer data flow
 3. **MCP Server** — expose the same models to AI assistants
-4. **RPC Services** — business service classes shared by MCP and web frameworks
+4. **UseCase Services** — business service classes shared by MCP and web frameworks
 
 ## What sqlmodel-nexus Gives You
 
@@ -89,7 +90,9 @@ The concepts appear in this order on purpose:
 | Cross-layer data flow | `ExposeAs`, `SendTo`, `Collector` | Pass context down or aggregate values up |
 | Non-ORM relationships | `Relationship(...)` on entity | Same DataLoader infra, same auto-loading |
 | AI-ready APIs | `config_simple_mcp_server(base=...)` | Progressive-disclosure MCP tools |
-| Business services | `RpcService` subclass with `async classmethod`s | Auto-discovery, SDL introspection, MCP + FastAPI dual serving |
+| Business services | `UseCaseService` subclass with `@query`/`@mutation` methods | Auto-discovery, SDL introspection, MCP + FastAPI dual serving |
+| DTO query building | `build_dto_select(DtoClass, where=...)` | Builds SQL SELECT from DefineSubset DTO fields |
+| Auto REST routes | `create_use_case_router(config)` | Generates POST routes from UseCaseService methods |
 
 ## Install
 
@@ -441,21 +444,21 @@ pip install sqlmodel-nexus[fastmcp]
 
 ---
 
-## RPC Services
+## UseCase Services
 
 Define business logic as service classes, expose them to both MCP and web frameworks from a single source of truth.
 
 ### Define Services
 
-`RpcService` subclasses declare `async classmethod`s. The metaclass auto-discovers public methods.
+`UseCaseService` subclasses declare methods decorated with `@query` / `@mutation`. The metaclass auto-discovers decorated methods.
 
 ```python
-from sqlmodel_nexus.rpc import RpcService
+from sqlmodel_nexus import UseCaseService, query, build_dto_select
 
-class SprintService(RpcService):
+class SprintService(UseCaseService):
     """Sprint management service."""
 
-    @classmethod
+    @query
     async def list_sprints(cls) -> list[SprintSummary]:
         """Get all sprints with task counts."""
         stmt = build_dto_select(SprintSummary)
@@ -464,7 +467,7 @@ class SprintService(RpcService):
         dtos = [SprintSummary(**dict(row._mapping)) for row in rows]
         return await Resolver().resolve(dtos)
 
-    @classmethod
+    @query
     async def get_sprint(cls, sprint_id: int) -> SprintSummary | None:
         """Get a sprint by ID."""
         stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
@@ -478,16 +481,20 @@ class SprintService(RpcService):
 
 ### Expose to MCP
 
-Three-layer progressive disclosure: discover → inspect → execute.
+Four-layer progressive disclosure: discover apps → discover services → inspect → execute.
 
 ```python
-from sqlmodel_nexus.rpc import create_rpc_mcp_server, RpcServiceConfig
+from sqlmodel_nexus import create_use_case_mcp_server, UseCaseAppConfig
 
-mcp = create_rpc_mcp_server(
-    services=[
-        RpcServiceConfig(name="sprint", service=SprintService, description="Sprint ops"),
+mcp = create_use_case_mcp_server(
+    apps=[
+        UseCaseAppConfig(
+            name="project",
+            services=[SprintService, TaskService],
+            description="Project management",
+        ),
     ],
-    name="Project RPC API",
+    name="Project UseCase API",
 )
 mcp.run()  # stdio mode
 ```
@@ -496,9 +503,10 @@ MCP tools provided:
 
 | Tool | Purpose |
 |------|---------|
-| `list_services()` | Discover available services and method counts |
-| `describe_service(service_name)` | Method signatures (SDL format) + DTO type definitions |
-| `call_rpc(service_name, method_name, params)` | Execute a method |
+| `list_apps()` | Discover available applications and service counts |
+| `list_services(app_name)` | List services and method counts in an app |
+| `describe_service(app_name, service_name)` | Method signatures (SDL format) + DTO type definitions |
+| `call_use_case(app_name, service_name, method_name, params)` | Execute a method |
 
 `describe_service` returns SDL-style signatures and type definitions:
 
@@ -513,7 +521,25 @@ MCP tools provided:
 }
 ```
 
-### Embed in Web Frameworks
+### Auto-Generate REST Routes
+
+Use `create_use_case_router()` to generate POST routes from UseCaseService methods — zero boilerplate.
+
+```python
+from sqlmodel_nexus import create_use_case_router, UseCaseAppConfig
+
+router = create_use_case_router(
+    UseCaseAppConfig(
+        name="project",
+        services=[SprintService, TaskService],
+    ),
+)
+app.include_router(router)
+```
+
+Routes: `POST /api/sprint_service/list_sprints`, `POST /api/sprint_service/get_sprint`, etc.
+
+### Manual REST Routes
 
 The same service classes integrate directly into FastAPI or any async web framework. Routes are thin wrappers — business logic stays in the service.
 
@@ -539,8 +565,8 @@ async def get_sprint(sprint_id: int):
 **One service class, two serving modes:**
 
 ```
-RpcService subclass ──┬── MCP server (AI agents, progressive disclosure)
-                      └── FastAPI routes (REST API, OpenAPI docs)
+UseCaseService subclass ──┬── MCP server (AI agents, progressive disclosure)
+                          └── FastAPI routes (REST API, OpenAPI docs)
 ```
 
 ---
@@ -550,22 +576,22 @@ RpcService subclass ──┬── MCP server (AI agents, progressive disclosur
 
 ```bash
 # GraphQL playground
-uv run python -m demo.app
+uv run python -m demo.blog.app
 # visit localhost:8000/graphql
 
 # Core API (REST)
 uv run uvicorn demo.core_api.app:app --reload
 # visit /docs
 
-# MCP server
-uv run --with fastmcp python -m demo.mcp_server
+# MCP server (GraphQL-based)
+uv run --with fastmcp python -m demo.blog.mcp_server
 
-# RPC MCP server (stdio or HTTP)
-uv run --with fastmcp python -m demo.rpc_mcp_server          # stdio
-uv run --with fastmcp python -m demo.rpc_mcp_server --http   # HTTP on port 8006
+# UseCase MCP server (stdio or HTTP)
+uv run --with fastmcp python -m demo.use_case.mcp_server          # stdio
+uv run --with fastmcp python -m demo.use_case.mcp_server --http   # HTTP on port 8006
 
-# RPC FastAPI — same services served as REST endpoints
-uv run uvicorn demo.rpc_fastapi:app --port 8007
+# UseCase FastAPI — same services served as REST endpoints
+uv run uvicorn demo.use_case.fastapi:app --port 8007
 # visit /docs to see routes grouped by service tag
 ```
 

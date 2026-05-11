@@ -118,15 +118,15 @@ uv run uvicorn demo.blog.app_paginated:app --port $PORT_PAG &
 PIDS+=($!)
 
 echo -e "${BLUE}Starting${NC} demo RPC MCP on port $PORT_RPC_MCP"
-PORT=$PORT_RPC_MCP uv run --with fastmcp python -m demo.rpc.mcp_server --http &
+PORT=$PORT_RPC_MCP uv run --with fastmcp python -m demo.use_case.mcp_server --http &
 PIDS+=($!)
 
 echo -e "${BLUE}Starting${NC} demo RPC FastAPI on port $PORT_RPC_FASTAPI"
-uv run uvicorn demo.rpc.fastapi:app --port $PORT_RPC_FASTAPI &
+uv run uvicorn demo.use_case.fastapi:app --port $PORT_RPC_FASTAPI &
 PIDS+=($!)
 
 echo -e "${BLUE}Starting${NC} demo RPC Voyager on port $PORT_RPC_VOYAGER"
-uv run uvicorn demo.rpc.voyager_demo:app --port $PORT_RPC_VOYAGER &
+uv run uvicorn demo.use_case.voyager_demo:app --port $PORT_RPC_VOYAGER &
 PIDS+=($!)
 
 echo ""
