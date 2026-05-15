@@ -98,7 +98,7 @@ class TestArgumentTypeInE2EQuery:
         registry = ErManager(entities=entities, session_factory=session_factory)
         executor = QueryExecutor(registry)
 
-        method = getattr(UserQuery, "get_filtered")
+        method = UserQuery.get_filtered
         query_methods = {"userGetFiltered": (FixtureUser, method)}
         parsed = QueryParser().parse("{ userGetFiltered(limit: 1) { id name } }")
 

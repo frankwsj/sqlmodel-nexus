@@ -1,6 +1,5 @@
 """Task UseCaseService — task management with auto-loaded owner."""
 from sqlmodel_nexus import UseCaseService, build_dto_select, query
-
 from src.database import async_session
 from src.models import Resolver, Task
 from src.service.task.dtos import TaskSummary
