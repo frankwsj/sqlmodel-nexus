@@ -25,13 +25,48 @@ graphql_handler = GraphQLHandler(
 )
 
 
+# ── MCP apps (must be created before lifespan to combine lifespans) ───
+
+from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
+from sqlmodel_nexus import UseCaseAppConfig, create_use_case_mcp_server  # noqa: E402
+from src.models import er  # noqa: E402
+from src.service.sprint.service import SprintService  # noqa: E402
+from src.service.task.service import TaskService  # noqa: E402
+
+mcp = create_mcp_server(
+    apps=[{
+        "name": "template",
+        "base": BaseEntity,
+        "session_factory": async_session,
+        "description": "Template entities CRUD.",
+    }],
+    name="Template MCP Server",
+    allow_mutation=True,
+)
+mcp_http = mcp.http_app(path="/", transport="streamable-http", stateless_http=True)
+
+use_case_mcp = create_use_case_mcp_server(
+    apps=[
+        UseCaseAppConfig(
+            name="template",
+            services=[TaskService, SprintService],
+            description="Task & Sprint business services",
+        ),
+    ],
+    name="Template UseCase MCP",
+)
+use_case_mcp_http = use_case_mcp.http_app(path="/", transport="streamable-http", stateless_http=True)
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    yield
+    async with mcp_http.lifespan(mcp_http):
+        async with use_case_mcp_http.lifespan(use_case_mcp_http):
+            yield
 
 
 app = FastAPI(
@@ -52,7 +87,6 @@ app.add_middleware(
 # ── Voyager visualization (Phase 1: ER diagram only) ──────────────────
 
 from sqlmodel_nexus import create_use_case_voyager  # noqa: E402
-from src.models import er  # noqa: E402
 
 voyager_app = create_use_case_voyager(
     services=[],  # Phase 3: add UseCaseService classes here
@@ -97,37 +131,7 @@ from src.router import api as api_router  # noqa: E402
 app.include_router(api_router.route)
 
 
-# ── MCP — entity-level CRUD (Phase 3) ────────────────────────────────
+# ── MCP mounts ───────────────────────────────────────────────────────
 
-from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
-
-mcp = create_mcp_server(
-    apps=[{
-        "name": "template",
-        "base": BaseEntity,
-        "session_factory": async_session,
-        "description": "Template entities CRUD.",
-    }],
-    name="Template MCP Server",
-    allow_mutation=True,
-)
-app.mount("/mcp", mcp.http_app(path="/"))
-
-
-# ── MCP — UseCase business methods (Phase 3) ─────────────────────────
-
-from sqlmodel_nexus import UseCaseAppConfig, create_use_case_mcp_server  # noqa: E402
-from src.service.sprint.service import SprintService  # noqa: E402
-from src.service.task.service import TaskService  # noqa: E402
-
-use_case_mcp = create_use_case_mcp_server(
-    apps=[
-        UseCaseAppConfig(
-            name="template",
-            services=[TaskService, SprintService],
-            description="Task & Sprint business services",
-        ),
-    ],
-    name="Template UseCase MCP",
-)
-app.mount("/mcp-usecase", use_case_mcp.http_app(path="/"))
+app.mount("/mcp", mcp_http)
+app.mount("/mcp-usecase", use_case_mcp_http)

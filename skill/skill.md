@@ -184,11 +184,13 @@ src/
 │   │   ├── methods.py  # Phase 2: 独立业务方法
 │   │   ├── dtos.py     # Phase 3: DTO
 │   │   ├── service.py  # Phase 3: UseCaseService
+│   │   ├── test.py     # Phase 3: unittest, file or folder, depends on complexity
 │   │   └── spec.md     # Phase 3: 服务说明
 │   └── chat/
 │       ├── methods.py
 │       ├── dtos.py
 │       ├── service.py
+│       ├── test.py
 │       └── spec.md
 ├── main.py         # 逐步扩展（voyager → graphql → rest → mcp）
 └── router/         # Phase 3 新增（可选，按需拆分）
@@ -295,6 +297,9 @@ src/
 - `create_use_case_voyager()` 可视化服务结构
 - `create_use_case_mcp_server()` + `UseCaseAppConfig` 暴露给 AI agent
 - REST 端点通过 `tags=[Service.get_tag_name()]` 分组
+- MCP http_app 必须使用 `transport="streamable-http", stateless_http=True`
+- MCP http_app 的 lifespan 必须在 FastAPI lifespan 中通过 `async with mcp_http.lifespan(mcp_http)` 嵌套启动
+- MCP http_app 对象必须在 lifespan 函数定义之前创建，以便引用
 
 **V 降 — 定义验收标准:**
 进入 Phase 3 编码之前，先与用户确认以下验收项并写入 `spec/phase3.md`：
@@ -364,6 +369,7 @@ npx openapi-typescript http://localhost:8000/openapi.json -o sdk/schema.d.ts
 9. **build_dto_select → dict(row._mapping) → DTO 构造** — 这是 Core API 的标准查询模式
 10. **每个 Model 必须有 docstring，每个 Field 必须有 description** — Phase 1 就要确保语义清晰，description 会传递到 OpenAPI spec
 11. **每个 service 子目录必须包含 spec.md** — 记录服务目的、用途、方法需求、DTO 说明和变更记录，方便团队理解服务边界
+12. **fastmcp>=3.2.4 挂载到 FastAPI 需要 lifespan 合并** — `app.mount("/mcp", mcp.http_app(path="/"))` 会报 `Task group is not initialized`。必须：(1) 使用 `transport="streamable-http", stateless_http=True`；(2) 在 lifespan 函数定义之前创建 MCP http_app 对象；(3) 将 MCP http_app 的 lifespan 嵌套到 FastAPI lifespan 中（`async with mcp_http.lifespan(mcp_http):`）
 
 ## 需求文档管理
 
