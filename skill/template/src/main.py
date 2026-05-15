@@ -5,17 +5,17 @@ Phase 2: + GraphQL with database + seed data
 Phase 3: + REST + MCP + Voyager with services
 """
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from src.db import async_session
-from src.database import init_db
-from src.models import BaseEntity
 from sqlmodel_nexus import GraphQLHandler
+from src.database import init_db
+from src.db import async_session
+from src.models import BaseEntity
 
 # ── GraphQL handler ───────────────────────────────────────────────────
 
@@ -27,8 +27,8 @@ graphql_handler = GraphQLHandler(
 
 # ── MCP apps (must be created before lifespan to combine lifespans) ───
 
-from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
 from sqlmodel_nexus import UseCaseAppConfig, create_use_case_mcp_server  # noqa: E402
+from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
 from src.models import er  # noqa: E402
 from src.service.sprint.service import SprintService  # noqa: E402
 from src.service.task.service import TaskService  # noqa: E402
@@ -101,8 +101,8 @@ app.mount("/voyager", voyager_app)
 
 class GraphQLRequest(BaseModel):
     query: str
-    variables: Optional[dict[str, Any]] = None
-    operation_name: Optional[str] = None
+    variables: dict[str, Any] | None = None
+    operation_name: str | None = None
 
 
 @app.get("/graphql", response_class=HTMLResponse)

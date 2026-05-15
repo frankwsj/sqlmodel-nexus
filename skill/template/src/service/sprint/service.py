@@ -1,6 +1,5 @@
 """Sprint UseCaseService — sprint management with task statistics."""
 from sqlmodel_nexus import UseCaseService, build_dto_select, query
-
 from src.database import async_session
 from src.models import Resolver, Sprint
 from src.service.sprint.dtos import SprintSummary

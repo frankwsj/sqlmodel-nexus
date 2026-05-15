@@ -61,7 +61,7 @@ class IntrospectionConfig(IntrospectionBase, table=True):
         score: float = 1.0,
         is_active: bool = True,
         tag: str | None = None,
-        tags: list[str] = [],
+        tags: list[str] | None = None,
     ) -> "IntrospectionConfig":
         return cls(key=key, value=value)
 

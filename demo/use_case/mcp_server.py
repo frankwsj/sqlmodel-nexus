@@ -23,7 +23,6 @@ from sqlmodel_nexus import (
     UseCaseService,
     build_dto_select,
     create_use_case_mcp_server,
-    mutation,
     query,
 )
 

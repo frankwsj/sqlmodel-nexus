@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sqlmodel_nexus.loader.registry import ErManager
+from sqlmodel_nexus.use_case.business import UseCaseService
 from sqlmodel_nexus.voyager.er_diagram_dot import ErDiagramDotBuilder
 from sqlmodel_nexus.voyager.render import Renderer
 from sqlmodel_nexus.voyager.render_style import DEFAULT_PRIMARY
