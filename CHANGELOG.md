@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.9.2
+
+### Bug Fix: 自引用 DTO 导致 `update_forward_refs` 无限递归
+
+修复 `voyager/type_helper.update_forward_refs` 遇到自引用 DTO（如 `parent: Self | None`）时无限递归崩溃的问题。
+
+**根因：** 自引用模型的字段 annotation 指向自身类型，递归遍历时缺少已访问集合，导致循环引用无法终止。
+
+**Changes:**
+- `voyager/type_helper.py`: `update_forward_refs` 新增 `_visited: set` 参数，跳过已处理的类型
+- `voyager/voyager_context.py`: 补充缺失的 `UseCaseService` 导入
+- 新增 `tests/test_voyager_selfref.py`：覆盖自引用 DTO 场景
+
+### Chore: Lint 修复
+
+- 移除未使用的 `mutation` 导入（`demo/use_case/mcp_server.py`）
+- 替换可变默认参数 `tags: list[str] = []` → `None`（`tests/test_introspection.py`）
+- 清理多余空行、简化 `getattr` 调用、整理 import 顺序
+
 ## 1.9.1
 
 ### Bug Fix: Inline Literal 参数类型丢失
