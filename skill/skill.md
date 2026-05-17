@@ -228,8 +228,14 @@ src/
 │       ├── service.py
 │       ├── test.py
 │       └── spec.md
-├── main.py         # 逐步扩展（voyager → graphql → rest → mcp）
-└── router/         # Phase 3 新增（可选，按需拆分）
+├── main.py         # 逐步扩展（voyager → graphql → create_use_case_router → mcp）
+fe/                 # Phase 4 前端 SDK
+├── openapi-ts.config.ts
+├── package.json
+└── src/sdk/        # 自动生成的 SDK
+    ├── sdk.gen.ts      # SDK class（按 tag 分组）
+    ├── types.gen.ts    # TS 类型定义
+    └── client/         # HTTP client
 ```
 
 ## 四阶段定义
@@ -319,13 +325,14 @@ src/
 编写 `service/<domain>/methods.py` → `models.py` 挂载
 
 **V 升 — 逐条回查验收:**
-启动服务，在 GraphiQL 中逐一执行验收表：
+启动服务，在 GraphiQL 中逐一执行验收表，同时运行自动化测试：
 
 - [ ] 1. create_user（正常）→ 返回新用户数据，关系字段正确
 - [ ] 2. create_user（重复）→ 返回预期错误信息
 - [ ] 3. list_users（分页）→ 分页参数生效
 - [ ] ...（每条对标验收表）
 - [ ] 确认 seed 数据仍可查询，Loader 行为符合预期
+- [ ] 自动化测试全部通过：`pytest tests/`
 
 ### Phase 3: UseCase 响应组装 + MCP
 
@@ -335,21 +342,31 @@ src/
 - `service/<entity>/spec.md` — 服务目的、用途、需求、变更记录
 - `service/<entity>/dtos.py` — DefineSubset DTOs
 - `service/<entity>/service.py` — UseCaseService
-- `router/` — FastAPI REST 端点（调用 Service）
-- `main.py` — 挂载 REST router + MCP + Voyager 补充 services
+- `main.py` — 用 `create_use_case_router()` 挂载 REST + MCP + Voyager 补充 services
 
 **关键模式**:
 - `DefineSubset` + `SubsetConfig` 定义响应 DTO（字段选择、FK 隐藏）
 - `ErManager` + `Resolver` 自动加载关系（implicit auto-load）
 - `UseCaseService` 统一业务逻辑入口（同时服务 MCP 和 FastAPI）
 - `@query` / `@mutation` 装饰器标记服务方法
+- **UseCaseService 方法必须声明返回类型注解**（如 `-> list[ChatSummary]`、`-> ChatSummary | None`），`create_use_case_router()` 从中提取 `response_model`，使 OpenAPI spec 正确反映 DTO 结构
 - `build_dto_select()` 只查 DTO 需要的列
 - **UseCaseService 复用 `service/<domain>/methods.py` 中的核心逻辑，不重新实现**：
   - **mutation 方法**：直接调用 methods.py 函数获取 Entity，再转换为 DTO
   - **query 方法**：使用 `build_dto_select` 高效查询 DTO 字段（查询模式遵循 methods.py 语义）
+- **`create_use_case_router()` 自动生成 REST 路由** — 从 UseCaseAppConfig 生成 POST 路由，自动提取 `response_model`、构建 request body model、注册路由。不需要手写 `router/` 目录
+  ```python
+  from sqlmodel_nexus import UseCaseAppConfig, create_use_case_router
+  use_case_router = create_use_case_router(
+      UseCaseAppConfig(
+          name="project",
+          services=[WorkspaceService, AgentService, ChatService],
+      ),
+  )
+  app.include_router(use_case_router)
+  ```
 - `create_use_case_voyager()` 可视化服务结构
 - `create_use_case_mcp_server()` + `UseCaseAppConfig` 暴露给 AI agent
-- REST 端点通过 `tags=[Service.get_tag_name()]` 分组
 - MCP http_app 必须使用 `transport="streamable-http", stateless_http=True`
 - MCP http_app 的 lifespan 必须在 FastAPI lifespan 中通过 `async with mcp_http.lifespan(mcp_http)` 嵌套启动
 - MCP http_app 对象必须在 lifespan 函数定义之前创建，以便引用
@@ -377,21 +394,58 @@ src/
 
 ### Phase 4: OpenAPI → TS SDK
 
-**目标**: 从 FastAPI OpenAPI spec 生成 TypeScript SDK。
+**目标**: 从 FastAPI OpenAPI spec 生成 TypeScript SDK（callable classes + types）。
+
+**前提**: Phase 3 必须使用 `create_use_case_router()` 生成 REST 路由（而非手写 router），才能在 OpenAPI spec 中正确暴露 `response_model`。
 
 **V 降 — 定义验收标准:**
 确认后写入 `spec/phase4.md`：
 
 | # | 验收项 | 验证方式 |
 |---|--------|----------|
-| 1 | `openapi.json` 中每个后端的 DTO 字段都有对应 TS 类型 | 检查生成的 d.ts |
+| 1 | 每个 DTO 字段都有对应 TS 类型 | 检查 types.gen.ts |
 | 2 | 后端字段名（snake_case）原样映射到 TS 类型 | 检查类型字段名 |
 | 3 | 嵌套关系在 TS 类型中有正确的递归结构 | 检查嵌套类型定义 |
 
 **实现：**
-```bash
-npx openapi-typescript http://localhost:8000/openapi.json -o sdk/schema.d.ts
+在项目根目录创建 `fe/` 子目录，使用 `@hey-api/openapi-ts` 生成 SDK：
+
+1. 创建 `fe/openapi-ts.config.ts`：
+```typescript
+import { defineConfig } from '@hey-api/openapi-ts';
+
+export default defineConfig({
+  input: 'http://localhost:8000/openapi.json',
+  output: {
+    fileName: { suffix: '.gen' },
+    path: 'src/sdk',
+    header: ['// @ts-nocheck'],
+  },
+  plugins: [
+    '@hey-api/client-fetch',
+    '@hey-api/typescript',
+    { name: '@hey-api/sdk', operations: { strategy: 'byTags' } },
+  ],
+});
 ```
+
+2. 创建 `fe/package.json`，添加依赖和脚本：
+```json
+{
+  "scripts": { "generate-client": "openapi-ts" },
+  "devDependencies": { "@hey-api/openapi-ts": "^0.97" }
+}
+```
+
+3. 安装依赖并生成：
+```bash
+cd fe && npm install && npm run generate-client
+```
+
+**生成产物**:
+- `fe/src/sdk/sdk.gen.ts` — 按 tag 分组的 SDK class（如 `WorkspaceService`、`ChatService`）
+- `fe/src/sdk/types.gen.ts` — 完整 TS 类型（含嵌套关系）
+- `fe/src/sdk/client/` — HTTP client 基础设施
 
 **V 升 — 逐条回查验收:**
 
@@ -424,6 +478,11 @@ npx openapi-typescript http://localhost:8000/openapi.json -o sdk/schema.d.ts
 11. **每个 service 子目录必须包含 spec.md** — 记录服务目的、用途、方法需求、DTO 说明和变更记录，方便团队理解服务边界
 12. **fastmcp>=3.2.4 挂载到 FastAPI 需要 lifespan 合并** — `app.mount("/mcp", mcp.http_app(path="/"))` 会报 `Task group is not initialized`。必须：(1) 使用 `transport="streamable-http", stateless_http=True`；(2) 在 lifespan 函数定义之前创建 MCP http_app 对象；(3) 将 MCP http_app 的 lifespan 嵌套到 FastAPI lifespan 中（`async with mcp_http.lifespan(mcp_http):`）
 13. **methods.py 函数需通过 `_mount()` 桥接 classmethod 协议** — `query()`/`mutation()` 返回 `classmethod`，会自动注入 `cls` 参数。methods.py 中的独立函数不含 `cls`，直接用 `query(fn)` 挂载到 Entity 后调用会 TypeError。使用 `_mount()` 辅助函数包装一层 `async def wrapper(cls, *args, **kwargs): return await fn(*args, **kwargs)` 来桥接。`@functools.wraps(fn)` 保留 docstring，确保 GraphQL SDL 正确生成描述
+14. **测试需 monkey-patch 每个 methods 模块的 `async_session`** — methods.py 执行 `from src.db import async_session` 时已绑定原始值，运行时 patch `src.db.async_session` 不会影响已导入的局部绑定。必须同时 patch `src.db` 和每个 methods 模块：`monkeypatch.setattr(mod, "async_session", test_factory)`
+15. **测试放在项目级 `tests/` 目录** — 不放在 `service/*/` 子目录，避免循环导入（tests 导入 src.models，而 models.py 底部导入 service methods）。每个业务域一个 `test_<domain>_methods.py` 文件
+16. **Use `create_use_case_router()` 而非手写路由** — 手写路由无法声明 `response_model`，导致 OpenAPI spec 中响应类型为空（`unknown`），TS SDK 无法生成有效类型。`create_use_case_router()` 从 UseCaseService 方法的返回类型注解（如 `-> list[ChatSummary]`）自动提取 `response_model`，使 FastAPI 在 OpenAPI spec 中正确描述响应结构
+17. **UseCaseService 方法必须声明返回类型注解** — `create_use_case_router()` 通过 `get_type_hints(method).get("return")` 提取返回类型作为 `response_model`。缺少返回注解的方法，其响应类型在 OpenAPI spec 中为空
+18. **`@hey-api/sdk` 的 `asClass` 已废弃** — v0.97+ 使用 `operations: { strategy: 'byTags' }` 替代 `asClass: true`，按 OpenAPI tags 分组生成 SDK class
 
 ## 需求文档管理
 
@@ -496,16 +555,16 @@ spec/<编号>-<需求简述>/
    - **V 升**: 逐条回查验收标准 → 通过后写入 `phase1.md` 完整内容 → **暂停等用户确认**
 5. **Phase 2**:
    - **V 降**: 与用户确认测试验收集（正常场景 + 边界异常）并写入 `spec/phase2.md#验收标准`
-   - **实现**: 编写 service/<domain>/methods.py → models.py 挂载
-   - **V 升**: 在 GraphiQL 中逐一执行验收表 → 通过后写入 `phase2.md` → **暂停等用户确认**
+   - **实现**: 编写 service/<domain>/methods.py → models.py 挂载 → tests/ 自动化测试
+   - **V 升**: 运行 `pytest tests/` + 在 GraphiQL 中逐一执行验收表 → 通过后写入 `phase2.md` → **暂停等用户确认**
 6. **Phase 3**:
    - **V 降**: 与用户确认 REST 端点、DTO 字段、MCP 分层的验收标准并写入 `spec/phase3.md#验收标准`
-   - **实现**: 新增 dtos.py + services.py + router → main.py 挂载
+   - **实现**: 新增 dtos.py + services.py → main.py 用 `create_use_case_router()` 挂载 REST
    - **V 升**: 测试 REST 响应结构 + Voyager 可视化 + MCP 调用链 → 通过后写入 `phase3.md` → **暂停等用户确认**
 7. **Phase 4**:
    - **V 降**: 确认 TS 类型覆盖、字段名一致性、嵌套结构等验收项并写入 `spec/phase4.md#验收标准`
-   - **实现**: 执行 openapi-typescript 命令
-   - **V 升**: 检查生成的 schema.d.ts → 通过后写入 `phase4.md` → **暂停等用户确认**
+   - **实现**: 创建 `fe/` 目录，配置 `@hey-api/openapi-ts`，执行 `npm run generate-client`
+   - **V 升**: 检查生成的 sdk.gen.ts + types.gen.ts → 通过后写入 `phase4.md` → **暂停等用户确认**
 
 ### story.md 的 Overview Design 部分
 
