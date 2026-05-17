@@ -18,6 +18,25 @@ flowchart LR
     model --> viz["Voyager<br/>Interactive ER diagram<br/>Service visualization"]
 ```
 
+## Quick Start with Claude Code Skill
+
+This project ships a [Claude Code skill](./skill/) that walks you through the full development lifecycle — from requirements confirmation to production deployment — in four phases:
+
+```bash
+ln -s $(pwd)/skill ~/.claude/skills/sqlmodel-nexus-4phase
+```
+
+Then in Claude Code, describe your requirements and invoke `/sqlmodel-nexus-4phase` to start.
+
+| Phase | Focus | Output |
+|-------|-------|--------|
+| Phase 0 | Requirements confirmation | Entities, relationships, aggregates, use-case methods |
+| Phase 1 | Schema + ER Diagram + seed data | models + db + voyager |
+| Phase 2 | Method implementation + Entity mounting | service methods, GraphQL queryable |
+| Phase 3 | UseCase response assembly + MCP | DTOs + services + REST + MCP |
+
+Manual setup is also straightforward — see [Install](#install) below.
+
 ## Why sqlmodel-nexus
 
 One model → four consumption paths, zero duplication:
@@ -597,20 +616,7 @@ uv run uvicorn demo.use_case.fastapi:app --port 8007
 
 ## Skill (Claude Code)
 
-A [Claude Code skill](./skill/) for progressive four-phase development — from requirements confirmation to production deployment. Create a symlink before use:
-
-```bash
-ln -s $(pwd)/skill ~/.claude/skills/sqlmodel-nexus-4phase
-```
-
-**Four phases:**
-
-| Phase | Focus | Output |
-|-------|-------|--------|
-| Phase 0 | Requirements confirmation | Entities, relationships, aggregates, use-case methods |
-| Phase 1 | Schema + ER Diagram + seed data | models + db + voyager |
-| Phase 2 | Method implementation + Entity mounting | service methods, GraphQL queryable |
-| Phase 3 | UseCase response assembly + MCP | DTOs + services + REST + MCP |
+See [Quick Start with Claude Code Skill](#quick-start-with-claude-code-skill) at the top of this README for setup instructions and the four-phase workflow.
 
 ## License
 
