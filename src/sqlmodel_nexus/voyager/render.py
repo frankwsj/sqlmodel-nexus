@@ -449,6 +449,32 @@ class Renderer:
             fontsize=fontsize or self.style.cluster_fontsize
         )
 
+    def render_service_clusters(self, tags: list[Tag]) -> str:
+        """Render each tag (service) as a cluster containing its routes.
+
+        When multiple services are present (no tag filter), wrap them in a
+        parent "Services" cluster. Service clusters are always rendered and
+        are not affected by the show_module toggle.
+        """
+        parts = []
+        for tag in tags:
+            route_strs = '\n'.join(self.render_route_node(r) for r in tag.routes)
+            cluster = self._render_cluster_container(
+                name=f'service_{tag.name}',
+                label=tag.name,
+                content=route_strs,
+            )
+            parts.append(cluster)
+
+        inner = '\n'.join(parts)
+        if len(tags) > 1:
+            return self._render_cluster_container(
+                name='services',
+                label='Services',
+                content=inner,
+            )
+        return inner
+
     def render_dot(
         self,
         tags: list[Tag],
@@ -457,21 +483,13 @@ class Renderer:
         links: list[Link],
         spline_line: bool = False
     ) -> str:
-        """Render the complete DOT graph."""
-        tag_str = '\n'.join(self.render_tag_node(t) for t in tags)
+        """Render the complete DOT graph.
 
-        tags_cluster = self._render_cluster_container(
-            name='tags',
-            label='Tags',
-            content=tag_str
-        )
-
-        module_routes_str = self.render_module_route_content(routes)
-        routes_cluster = self._render_cluster_container(
-            name='router',
-            label='Routes',
-            content=module_routes_str
-        )
+        Layout: each service (tag) is rendered as a cluster containing its
+        methods (routes), followed by a schema cluster. Service clusters are
+        always present regardless of the show_module setting.
+        """
+        service_clusters = self.render_service_clusters(tags)
 
         module_schemas_str = self.render_module_schema_content(nodes)
         schemas_cluster = self._render_cluster_container(
@@ -489,8 +507,8 @@ class Renderer:
             spline='line' if spline_line else '',
             font=self.style.font,
             node_fontsize=self.style.node_fontsize,
-            tags_cluster=tags_cluster,
-            routes_cluster=routes_cluster,
+            tags_cluster=service_clusters,
+            routes_cluster='',
             schemas_cluster=schemas_cluster,
             links=link_str
         )

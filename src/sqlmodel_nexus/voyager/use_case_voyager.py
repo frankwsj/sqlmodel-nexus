@@ -283,6 +283,12 @@ class UseCaseVoyager:
             node_set=self.node_set,
         )
 
+        _tags, _routes, _nodes, _links = self._filter_by_selected_tags(
+            _tags, _routes, _nodes, _links
+        )
+        # Remove tag_route links since tags are no longer rendered as nodes
+        _links = [lk for lk in _links if lk.type != 'tag_route']
+
         renderer = Renderer(
             show_fields=self.show_fields,
             module_color=self.module_color,
@@ -291,12 +297,48 @@ class UseCaseVoyager:
             theme_color=self.theme_color,
             show_pydantic_resolve_meta=show_pydantic_resolve_meta,
         )
-
-        _tags, _routes, _links = self._handle_hide(_tags, _routes, _links)
         return renderer.render_dot(_tags, _routes, _nodes, _links)
 
-    def _handle_hide(self, tags, routes, links):
-        if self.include_tags:
-            return [], routes, [lk for lk in links if lk.type != 'tag_route']
-        else:
-            return tags, routes, links
+    def _filter_by_selected_tags(
+        self,
+        tags: list[Tag],
+        routes: list[Route],
+        nodes: list[SchemaNode],
+        links: list[Link],
+    ) -> tuple[list[Tag], list[Route], list[SchemaNode], list[Link]]:
+        """Filter graph data to only show selected service clusters and their reachable schemas."""
+        if not self.include_tags:
+            return tags, routes, nodes, links
+
+        selected_tag_ids = {f'tag__{t}' for t in self.include_tags}
+        _tags = [t for t in tags if t.id in selected_tag_ids]
+
+        selected_route_ids = {r.id for t in _tags for r in t.routes}
+        _routes = [r for r in routes if r.id in selected_route_ids]
+
+        # Build schema adjacency from links and collect reachable schemas via BFS
+        schema_adj: dict[str, list[str]] = {}
+        for lk in links:
+            if lk.type in ('route_to_schema', 'schema', 'parent', 'subset'):
+                schema_adj.setdefault(lk.source_origin, []).append(lk.target_origin)
+
+        reachable_schema_ids: set[str] = set()
+        queue = list(selected_route_ids)
+        visited: set[str] = set(selected_route_ids)
+        while queue:
+            current = queue.pop(0)
+            for neighbor in schema_adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    reachable_schema_ids.add(neighbor)
+                    queue.append(neighbor)
+
+        _nodes = [n for n in nodes if n.id in reachable_schema_ids]
+
+        valid_ids = selected_tag_ids | selected_route_ids | reachable_schema_ids
+        _links = [
+            lk for lk in links
+            if lk.source_origin in valid_ids and lk.target_origin in valid_ids
+        ]
+
+        return _tags, _routes, _nodes, _links

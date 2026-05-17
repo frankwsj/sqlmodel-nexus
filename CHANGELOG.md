@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.3
+
+### Refactoring: Voyager 图布局改为 Service Cluster 模式
+
+将 Voyager 图从「Tags | Routes | Schema」三列布局改为「Services(methods) | Schema」布局。每个 UseCaseService 渲染为一个独立的 cluster，内部直接包含其 methods，不受 show_module 开关影响。选中某个 service 时只显示该 service cluster 及其关联的 schemas。
+
+**Changes:**
+- `voyager/render.py`: 新增 `render_service_clusters`，合并原 Tags + Routes 为 service cluster；无选中 tag 时用 Services 外层包裹
+- `voyager/use_case_voyager.py`: 重写过滤逻辑 `_filter_by_selected_tags`，按选中 service 做 BFS 过滤可达 schemas；移除不再需要的 `tag_route` links
+
+### Chore: Skill 模板优化（Phase 0~4）
+
+四阶段 skill 模板重大改进：Phase 1 改为纯实体无方法；Phase 2 引入 `_mount()` 桥接 classmethod 协议；Phase 3 改用 `create_use_case_router()` 自动生成路由；Phase 4 改用 `@hey-api/openapi-ts` 生成 SDK。新增 user service 模板、pytest 配置、uv.lock。
+
+**Changes:**
+- `skill/skill.md`: Phase 0 新增 Service 切分候选方案讨论流程；Phase 1 移除 @query/@mutation 占位；Phase 2 新增 `_mount()` 模式；Phase 3 改用 `create_use_case_router()`；Phase 4 改用 `@hey-api/openapi-ts`
+- `skill/template/src/models.py`: 纯实体定义，方法挂载改为从 methods.py `_mount()`
+- `skill/template/src/service/`: 新增 user 模板目录，sprint/task 补充 mutation 方法
+- `skill/template/pyproject.toml`: 新增 pytest/pytest-asyncio 可选依赖和配置
+
 ## 1.9.2
 
 ### Bug Fix: 自引用 DTO 导致 `update_forward_refs` 无限递归
