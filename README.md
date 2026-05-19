@@ -18,15 +18,35 @@ flowchart LR
     model --> viz["Voyager<br/>Interactive ER diagram<br/>Service visualization"]
 ```
 
-## Quick Start with Claude Code Skill
+## Quick Start with AI Agent Skills
 
-This project ships a [Claude Code skill](./skill/) that walks you through the full development lifecycle — from requirements confirmation to production deployment — in four phases:
+This project ships a [skill](./skill/) that walks you through the full development lifecycle — from requirements confirmation to production deployment — in four phases. The skill uses the standard `SKILL.md` format supported by both Claude Code and OpenAI Codex.
+
+### Claude Code
 
 ```bash
 ln -s $(pwd)/skill ~/.claude/skills/sqlmodel-nexus-4phase
 ```
 
-Then in Claude Code, describe your requirements and invoke `/sqlmodel-nexus-4phase` to start.
+Then describe your requirements and invoke `/sqlmodel-nexus-4phase` to start.
+
+### OpenAI Codex
+
+**Repo-scope** (recommended — skill travels with the repo, all team members get it):
+
+```bash
+mkdir -p .agents/skills
+ln -s ../../skill .agents/skills/sqlmodel-nexus-4phase
+```
+
+**User-scope** (personal, works across all repos):
+
+```bash
+mkdir -p ~/.agents/skills
+ln -s $(pwd)/skill ~/.agents/skills/sqlmodel-nexus-4phase
+```
+
+Then start Codex and type `$sqlmodel-nexus-4phase` or describe your requirements to trigger the skill implicitly.
 
 | Phase | Focus | Output |
 |-------|-------|--------|
