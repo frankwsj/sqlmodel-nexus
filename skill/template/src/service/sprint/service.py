@@ -4,7 +4,11 @@ from src.models import Resolver
 from src.service.sprint.dtos import SprintSummary
 from src.service.sprint.methods import (
     create_sprint as _create_sprint,
+)
+from src.service.sprint.methods import (
     get_sprint as _get_sprint,
+)
+from src.service.sprint.methods import (
     list_sprints as _list_sprints,
 )
 

@@ -1,5 +1,6 @@
 """Tests for TypeConverter."""
 
+from datetime import datetime
 from enum import Enum
 
 from sqlmodel import SQLModel
@@ -157,6 +158,11 @@ class TestTypeConverterScalarTypeName:
         """Test getting scalar name for float."""
         converter = TypeConverter({"UserForConverterTest"})
         assert converter.get_scalar_type_name(float) == "Float"
+
+    def test_get_scalar_type_name_datetime(self) -> None:
+        """Test getting scalar name for datetime."""
+        converter = TypeConverter({"UserForConverterTest"})
+        assert converter.get_scalar_type_name(datetime) == "DateTime"
 
     def test_get_scalar_type_name_non_scalar(self) -> None:
         """Test getting scalar name for non-scalar type returns None."""

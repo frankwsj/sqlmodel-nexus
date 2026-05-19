@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from graphql import parse
 from sqlmodel import SQLModel, select
@@ -79,6 +81,73 @@ class TestArgumentBuilderTypeConversion:
 
 class TestArgumentTypeInE2EQuery:
     """End-to-end test: verify the @query method receives correctly typed arguments."""
+
+    def _build_datetime_args(self, value: str) -> dict:
+        """Build arguments for a DateTime literal."""
+        class MeetingQuery(SQLModel, table=False):
+            async def get_by_time(cls, meeting_time: datetime):
+                return None
+
+        document = parse(f'{{ meetingGetByTime(meeting_time: "{value}") {{ id }} }}')
+        selection = document.definitions[0].selection_set.selections[0]
+        builder = ArgumentBuilder()
+
+        return builder.build_arguments(
+            selection,
+            None,
+            MeetingQuery.get_by_time,
+            FixtureUser,
+            {"FixtureUser"},
+        )
+
+    def test_datetime_literal_with_z_reaches_method_as_utc_datetime(self):
+        """A DateTime literal with Z should become UTC aware."""
+        args = self._build_datetime_args("2026-05-19T10:30:00Z")
+
+        assert args["meeting_time"] == datetime(2026, 5, 19, 10, 30, tzinfo=timezone.utc)
+        assert isinstance(args["meeting_time"], datetime)
+
+    def test_datetime_literal_with_utc_offset_reaches_method_as_utc_datetime(self):
+        """A DateTime literal with +00:00 should become UTC aware."""
+        args = self._build_datetime_args("2026-05-19T10:30:00+00:00")
+
+        assert args["meeting_time"] == datetime(2026, 5, 19, 10, 30, tzinfo=timezone.utc)
+
+    def test_datetime_literal_with_non_utc_offset_is_normalized_to_utc(self):
+        """A DateTime literal with an offset should be normalized to UTC."""
+        args = self._build_datetime_args("2026-05-19T18:30:00+08:00")
+
+        assert args["meeting_time"] == datetime(2026, 5, 19, 10, 30, tzinfo=timezone.utc)
+
+    def test_datetime_literal_without_timezone_is_rejected(self):
+        """A DateTime literal without timezone information should be rejected."""
+        with pytest.raises(ValueError, match="timezone information"):
+            self._build_datetime_args("2026-05-19T10:30:00")
+
+    def test_datetime_variable_reaches_method_as_utc_datetime(self):
+        """A DateTime variable should be normalized to UTC."""
+        class MeetingQuery(SQLModel, table=False):
+            async def get_by_time(cls, meeting_time: datetime | None = None):
+                return None
+
+        document = parse(
+            "query($meeting_time: DateTime) { "
+            "meetingGetByTime(meeting_time: $meeting_time) { id } "
+            "}"
+        )
+        selection = document.definitions[0].selection_set.selections[0]
+        builder = ArgumentBuilder()
+
+        args = builder.build_arguments(
+            selection,
+            {"meeting_time": "2026-05-19T18:30:00+08:00"},
+            MeetingQuery.get_by_time,
+            FixtureUser,
+            {"FixtureUser"},
+        )
+
+        assert args["meeting_time"] == datetime(2026, 5, 19, 10, 30, tzinfo=timezone.utc)
+        assert isinstance(args["meeting_time"], datetime)
 
     @pytest.mark.usefixtures("test_db")
     async def test_int_argument_reaches_method_as_int(self):

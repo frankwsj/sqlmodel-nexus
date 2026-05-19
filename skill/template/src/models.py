@@ -24,7 +24,10 @@ class User(BaseEntity, table=True):
     name: str = Field(description="用户显示名称")
 
     # ORM relationships (noload: use explicit queries or Resolver DataLoader)
-    tasks: list["Task"] = Relationship(back_populates="owner", sa_relationship_kwargs={"lazy": "noload"})
+    tasks: list["Task"] = Relationship(
+        back_populates="owner",
+        sa_relationship_kwargs={"lazy": "noload"},
+    )
 
 
 class Sprint(BaseEntity, table=True):
@@ -48,10 +51,17 @@ class Task(BaseEntity, table=True):
     done: bool = Field(default=False, description="是否已完成")
 
     sprint_id: int = Field(foreign_key="sprint.id", description="所属 Sprint ID")
-    owner_id: int | None = Field(default=None, foreign_key="user.id", description="负责人 ID，可为空表示未分配")
+    owner_id: int | None = Field(
+        default=None,
+        foreign_key="user.id",
+        description="负责人 ID，可为空表示未分配",
+    )
 
     # ORM relationships (noload)
-    sprint: Optional["Sprint"] = Relationship(back_populates="tasks", sa_relationship_kwargs={"lazy": "noload"})
+    sprint: Optional["Sprint"] = Relationship(
+        back_populates="tasks",
+        sa_relationship_kwargs={"lazy": "noload"},
+    )
     owner: Optional["User"] = Relationship(sa_relationship_kwargs={"lazy": "noload"})
 
 
@@ -61,6 +71,7 @@ class Task(BaseEntity, table=True):
 def mount_method():
     """挂载 service methods 到 entity classes。需在外部显式调用。"""
     import functools
+
     from sqlmodel_nexus import mutation, query
     from src.service.sprint.methods import create_sprint, list_sprints
     from src.service.task.methods import create_task, get_tasks_by_sprint, list_tasks

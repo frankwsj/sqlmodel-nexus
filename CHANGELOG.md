@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.10.0
+
+### Feature: GraphQL DateTime 参数支持与 UTC 归一化
+
+新增 Python `datetime` 到 GraphQL `DateTime` scalar 的映射，并在 GraphQL 参数构建阶段将传入的 timezone-aware DateTime 字符串转换为 UTC aware `datetime`。
+
+**Behavior:**
+- 支持 `2026-05-19T10:30:00Z`、`2026-05-19T10:30:00+00:00` 等 UTC 字符串
+- 支持 `2026-05-19T18:30:00+08:00` 等带 offset 字符串，并统一归一化为 UTC
+- 拒绝 `2026-05-19T10:30:00` 等无时区 naive DateTime 字符串，避免跨时区语义歧义
+
+**Changes:**
+- `type_converter.py`: 新增 `datetime -> DateTime` scalar 映射
+- `introspection.py`: `__schema` introspection 暴露 `DateTime` scalar
+- `execution/argument_builder.py`: 使用 Pydantic `AwareDatetime` 校验 DateTime 参数并归一化到 UTC
+- `pyproject.toml`: 显式声明 `pydantic>=2.0`
+- 新增 DateTime 参数类型、UTC 归一化和 naive 拒绝的回归测试
+
 ## 1.9.3
 
 ### Refactoring: Voyager 图布局改为 Service Cluster 模式

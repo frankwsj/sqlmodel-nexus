@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 from typing import Any, get_type_hints
 
 from graphql import (
@@ -13,10 +14,19 @@ from graphql import (
     NullValueNode,
     StringValueNode,
 )
+from pydantic import AwareDatetime, TypeAdapter, ValidationError
+
+from sqlmodel_nexus.type_converter import TypeConverter
+
+_DATETIME_ADAPTER = TypeAdapter(AwareDatetime)
 
 
 class ArgumentBuilder:
     """Builds method arguments from GraphQL field arguments."""
+
+    def __init__(self) -> None:
+        """Initialize the argument builder."""
+        self._converter = TypeConverter(set())
 
     def _extract_value(self, node: Any) -> Any:
         """Extract Python value from a GraphQL AST value node.
@@ -100,6 +110,27 @@ class ArgumentBuilder:
 
         return target_type(**converted)
 
+    def _convert_scalar_value(self, value: Any, target_type: Any) -> Any:
+        """Convert GraphQL scalar values that need Python runtime types."""
+        if value is None:
+            return None
+
+        if self._converter.is_optional(target_type):
+            target_type = self._converter.unwrap_optional(target_type)
+        if target_type is datetime and isinstance(value, str):
+            return self._parse_datetime(value)
+
+        return value
+
+    def _parse_datetime(self, value: str) -> datetime:
+        """Parse a timezone-aware DateTime string and normalize it to UTC."""
+        try:
+            parsed = _DATETIME_ADAPTER.validate_python(value)
+        except ValidationError as exc:
+            raise ValueError("DateTime values must include timezone information") from exc
+
+        return parsed.astimezone(timezone.utc)
+
     def build_arguments(
         self,
         selection: Any,
@@ -161,6 +192,7 @@ class ArgumentBuilder:
                 # Convert to Input model if the parameter type is an Input type
                 if actual_param_name in hints:
                     param_type = hints[actual_param_name]
+                    value = self._convert_scalar_value(value, param_type)
                     value = self._convert_to_input_model(value, param_type, entity_names)
                 args[actual_param_name] = value
 

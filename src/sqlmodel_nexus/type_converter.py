@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import types
+from datetime import datetime
 from enum import Enum
 from typing import Any, Union, get_args, get_origin
 
@@ -20,6 +21,7 @@ class TypeConverter:
         str: "String",
         bool: "Boolean",
         float: "Float",
+        datetime: "DateTime",
     }
 
     def __init__(self, entity_names: set[str]):

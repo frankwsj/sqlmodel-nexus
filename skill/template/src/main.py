@@ -12,17 +12,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from sqlmodel_nexus import GraphQLHandler
+# ── MCP apps (must be created before lifespan to combine lifespans) ───
+from sqlmodel_nexus import (  # noqa: E402
+    GraphQLHandler,
+    UseCaseAppConfig,
+    create_use_case_mcp_server,
+)
+from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
 from src.database import init_db
 from src.db import async_session
-from src.models import BaseEntity
-
-
-# ── MCP apps (must be created before lifespan to combine lifespans) ───
-
-from sqlmodel_nexus import UseCaseAppConfig, create_use_case_mcp_server  # noqa: E402
-from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
-from src.models import er, mount_method  # noqa: E402
+from src.models import BaseEntity, er, mount_method  # noqa: E402
 from src.service.sprint.service import SprintService  # noqa: E402
 from src.service.task.service import TaskService  # noqa: E402
 
@@ -59,7 +58,11 @@ use_case_mcp = create_use_case_mcp_server(
     ],
     name="Template UseCase MCP",
 )
-use_case_mcp_http = use_case_mcp.http_app(path="/", transport="streamable-http", stateless_http=True)
+use_case_mcp_http = use_case_mcp.http_app(
+    path="/",
+    transport="streamable-http",
+    stateless_http=True,
+)
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────

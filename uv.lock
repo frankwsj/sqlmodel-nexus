@@ -1700,7 +1700,7 @@ wheels = [
 
 [[package]]
 name = "sqlmodel-nexus"
-version = "1.9.3"
+version = "1.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiodataloader" },
@@ -1708,6 +1708,7 @@ dependencies = [
     { name = "graphql-core" },
     { name = "greenlet" },
     { name = "jinja2" },
+    { name = "pydantic" },
     { name = "sqlmodel" },
     { name = "uvicorn" },
 ]
@@ -1755,6 +1756,7 @@ requires-dist = [
     { name = "greenlet", marker = "extra == 'dev'", specifier = ">=3.3.2" },
     { name = "jinja2", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
