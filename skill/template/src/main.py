@@ -17,21 +17,25 @@ from src.database import init_db
 from src.db import async_session
 from src.models import BaseEntity
 
-# ── GraphQL handler ───────────────────────────────────────────────────
-
-graphql_handler = GraphQLHandler(
-    base=BaseEntity,
-    session_factory=async_session,
-)
-
 
 # ── MCP apps (must be created before lifespan to combine lifespans) ───
 
 from sqlmodel_nexus import UseCaseAppConfig, create_use_case_mcp_server  # noqa: E402
 from sqlmodel_nexus.mcp import create_mcp_server  # noqa: E402
-from src.models import er  # noqa: E402
+from src.models import er, mount_method  # noqa: E402
 from src.service.sprint.service import SprintService  # noqa: E402
 from src.service.task.service import TaskService  # noqa: E402
+
+# ── Mount methods onto entities (must be called before GraphQL handler) ──
+
+mount_method()
+
+# ── GraphQL handler (must be created AFTER mount_method) ──────────────
+
+graphql_handler = GraphQLHandler(
+    base=BaseEntity,
+    session_factory=async_session,
+)
 
 mcp = create_mcp_server(
     apps=[{

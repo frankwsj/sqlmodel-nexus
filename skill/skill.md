@@ -163,7 +163,7 @@ service/<domain>/methods.py  ← 独立定义业务逻辑（核心）
   (GraphQL 辅助测试)          (REST + MCP 正式接口)
 ```
 
-- Phase 2：方法体在 `service/<domain>/methods.py` 中实现，`models.py` 通过直接赋值挂载到 Entity
+- Phase 2：方法体在 `service/<domain>/methods.py` 中实现，`models.py` 的 `mount_method()` 函数挂载到 Entity，`main.py` 显式调用
 - Phase 3：同一个方法挂载到 UseCaseService（REST/MCP 使用），DTO 转换在 Service 层完成
 
 ### Step 0-6: 第三方库确认
@@ -282,29 +282,37 @@ fe/                 # Phase 4 前端 SDK
 
 **新增/修改文件**:
 - `service/<domain>/methods.py` — 独立业务方法实现（核心逻辑，不含 @query/@mutation 装饰器）
-- `models.py` — 从 methods 导入并通过 `Entity.method = query(fn)` / `Entity.method = mutation(fn)` 挂载
+- `models.py` — 新增 `mount_method()` 函数，延迟 import methods 并通过 `_mount()` 挂载到 Entity
 
 **关键模式**:
 - 业务方法在 `service/<domain>/methods.py` 中定义，为普通 async 函数（不含 `cls` 参数，非 classmethod）
-- `models.py` 通过 `_mount()` 辅助函数挂载（桥接 classmethod 协议）：
+- `models.py` 通过 `mount_method()` 函数挂载（桥接 classmethod 协议）。函数体内做延迟 import 避免循环依赖，`main.py` 中显式调用：
   ```python
-  import functools
-  from sqlmodel_nexus import mutation, query
-  from src.service.user.methods import list_users, create_user
+  # models.py 底部
+  def mount_method():
+      """挂载 service methods 到 entity classes。需在外部显式调用。"""
+      import functools
+      from sqlmodel_nexus import mutation, query
+      from src.service.user.methods import list_users, create_user
 
-  def _mount(entity, name, fn, decorator):
-      """Wrap a plain async function to accept cls, then apply decorator."""
-      @functools.wraps(fn)
-      async def wrapper(cls, *args, **kwargs):
-          return await fn(*args, **kwargs)
-      setattr(entity, name, decorator(wrapper))
+      def _mount(entity, fn, decorator):
+          @functools.wraps(fn)
+          async def wrapper(cls, *args, **kwargs):
+              return await fn(*args, **kwargs)
+          setattr(entity, fn.__name__, decorator(wrapper))
 
-  _mount(User, "list_users", list_users, query)
-  _mount(User, "create_user", create_user, mutation)
+      _mount(User, list_users, query)
+      _mount(User, create_user, mutation)
   ```
-- `_mount()` 保留原始函数的 docstring，确保 GraphQL SDL 正确生成描述
+  ```python
+  # main.py（在 graphql_handler 创建之前调用）
+  from src.models import mount_method
+  mount_method()
+  graphql_handler = GraphQLHandler(base=BaseEntity, session_factory=async_session)
+  ```
+- `_mount()` 用 `fn.__name__` 作为挂载属性名，`@functools.wraps(fn)` 保留 docstring 确保 GraphQL SDL 正确生成描述
 - GraphQL 作为辅助测试接口，`@query`/`@mutation` 装饰器在挂载时应用
-- 挂载代码放在 Entity class 定义之后、ErManager 之前
+- `mount_method()` 定义放在 Entity class 之后、ErManager 之前
 
 **V 降 — 定义验收标准:**
 进入 Phase 2 编码之前，先与用户确认测试验收集并写入 `spec/phase2.md`：
@@ -458,9 +466,9 @@ cd fe && npm install && npm run generate-client
 
 | 方面 | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
 |------|---------|---------|---------|---------|
-| 实体 | 纯字段 + Relationship + docstring + mock seed | methods.py 实现 + `_mount()` 挂载到 Entity | 继承 Phase 2 | - |
+| 实体 | 纯字段 + Relationship + docstring + mock seed | methods.py 实现 + `mount_method()` 挂载到 Entity | 继承 Phase 2 | - |
 | 关系 | Relationship 声明 | DataLoader 实现 | DefineSubset 隐藏 FK | - |
-| 查询 | 无方法 | methods.py + `_mount()` 挂载 | UseCaseService 封装（复用 methods.py） | - |
+| 查询 | 无方法 | methods.py + `mount_method()` 挂载 | UseCaseService 封装（复用 methods.py） | - |
 | API | Voyager(ER diagram) | GraphiQL | GraphQL + REST + Voyager(+services) + MCP | TS SDK |
 | 响应 | N/A | 完整实体 | DefineSubset DTO | OpenAPI spec |
 
@@ -479,6 +487,8 @@ cd fe && npm install && npm run generate-client
 11. **每个 service 子目录必须包含 spec.md** — 记录服务目的、用途、方法需求、DTO 说明和变更记录，方便团队理解服务边界
 12. **fastmcp>=3.2.4 挂载到 FastAPI 需要 lifespan 合并** — `app.mount("/mcp", mcp.http_app(path="/"))` 会报 `Task group is not initialized`。必须：(1) 使用 `transport="streamable-http", stateless_http=True`；(2) 在 lifespan 函数定义之前创建 MCP http_app 对象；(3) 将 MCP http_app 的 lifespan 嵌套到 FastAPI lifespan 中（`async with mcp_http.lifespan(mcp_http):`）
 13. **methods.py 函数需通过 `_mount()` 桥接 classmethod 协议** — `query()`/`mutation()` 返回 `classmethod`，会自动注入 `cls` 参数。methods.py 中的独立函数不含 `cls`，直接用 `query(fn)` 挂载到 Entity 后调用会 TypeError。使用 `_mount()` 辅助函数包装一层 `async def wrapper(cls, *args, **kwargs): return await fn(*args, **kwargs)` 来桥接。`@functools.wraps(fn)` 保留 docstring，确保 GraphQL SDL 正确生成描述
+21. **`GraphQLHandler` 必须在 `mount_method()` 之后创建** — `GraphQLHandler` 在初始化时扫描 BaseEntity 子类的 `@query`/`@mutation` 方法构建 schema。如果先创建 handler 再挂载方法，GraphQL schema 会为空。`main.py` 中必须先调用 `mount_method()` 再创建 `graphql_handler`
+22. **`mount_method()` 定义在 `models.py` 中，`main.py` 显式调用** — 挂载逻辑和 entity 定义放在一起，减少文件跳转。函数体内做延迟 import（`from src.service.xxx.methods import ...`）避免循环依赖。`main.py` 中 `from src.models import mount_method` + `mount_method()` 显式调用，比 import 副作用更清晰
 14. **测试需 monkey-patch 每个 methods 模块的 `async_session`** — methods.py 执行 `from src.db import async_session` 时已绑定原始值，运行时 patch `src.db.async_session` 不会影响已导入的局部绑定。必须同时 patch `src.db` 和每个 methods 模块：`monkeypatch.setattr(mod, "async_session", test_factory)`
 15. **测试放在项目级 `tests/` 目录** — 不放在 `service/*/` 子目录，避免循环导入（tests 导入 src.models，而 models.py 底部导入 service methods）。每个业务域一个 `test_<domain>_methods.py` 文件
 16. **Use `create_use_case_router()` 而非手写路由** — 手写路由无法声明 `response_model`，导致 OpenAPI spec 中响应类型为空（`unknown`），TS SDK 无法生成有效类型。`create_use_case_router()` 从 UseCaseService 方法的返回类型注解（如 `-> list[ChatSummary]`）自动提取 `response_model`，使 FastAPI 在 OpenAPI spec 中正确描述响应结构
@@ -558,7 +568,7 @@ spec/<编号>-<需求简述>/
    - **V 升**: 逐条回查验收标准 → 通过后写入 `phase1.md` 完整内容 → **暂停等用户确认**
 5. **Phase 2**:
    - **V 降**: 与用户确认测试验收集（正常场景 + 边界异常）并写入 `spec/phase2.md#验收标准`
-   - **实现**: 编写 service/<domain>/methods.py → models.py 挂载 → tests/ 自动化测试
+   - **实现**: 编写 service/<domain>/methods.py → models.py 中 `mount_method()` 挂载 → main.py 调用 `mount_method()` → tests/ 自动化测试
    - **V 升**: 运行 `pytest tests/` + 在 GraphiQL 中逐一执行验收表 → 通过后写入 `phase2.md` → **暂停等用户确认**
 6. **Phase 3**:
    - **V 降**: 与用户确认 REST 端点、DTO 字段、MCP 分层的验收标准并写入 `spec/phase3.md#验收标准`

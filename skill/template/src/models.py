@@ -1,7 +1,7 @@
 """Phase 1→2: SQLModel entity definitions.
 
 Phase 1: Pure entity fields + Relationship declarations (no methods).
-Phase 2: Method mounting from service/<domain>/methods.py via _mount().
+Phase 2: Method mounting from service/<domain>/methods.py via mount_method().
 
 Entity graph:
     Sprint ──1:N──→ Task ──N:1──→ User
@@ -57,33 +57,28 @@ class Task(BaseEntity, table=True):
 
 # ── Method mounting (Phase 2) ─────────────────────────────────────────
 
-import functools  # noqa: E402
 
-from sqlmodel_nexus import mutation, query  # noqa: E402
-from src.service.sprint.methods import create_sprint, list_sprints  # noqa: E402
-from src.service.task.methods import create_task, get_tasks_by_sprint, list_tasks  # noqa: E402
-from src.service.user.methods import create_user, list_users  # noqa: E402
+def mount_method():
+    """挂载 service methods 到 entity classes。需在外部显式调用。"""
+    import functools
+    from sqlmodel_nexus import mutation, query
+    from src.service.sprint.methods import create_sprint, list_sprints
+    from src.service.task.methods import create_task, get_tasks_by_sprint, list_tasks
+    from src.service.user.methods import create_user, list_users
 
+    def _mount(entity, fn, decorator):
+        @functools.wraps(fn)
+        async def wrapper(cls, *args, **kwargs):
+            return await fn(*args, **kwargs)
+        setattr(entity, fn.__name__, decorator(wrapper))
 
-def _mount(entity, name, fn, decorator):
-    """Mount a plain async function to entity as @query/@mutation classmethod.
-
-    Wraps ``fn`` to accept an unused ``cls`` parameter (required by classmethod
-    protocol) and copies the docstring so GraphQL SDL picks up the description.
-    """
-    @functools.wraps(fn)
-    async def wrapper(cls, *args, **kwargs):
-        return await fn(*args, **kwargs)
-    setattr(entity, name, decorator(wrapper))
-
-
-_mount(User, "list_users", list_users, query)
-_mount(User, "create_user", create_user, mutation)
-_mount(Sprint, "list_sprints", list_sprints, query)
-_mount(Sprint, "create_sprint", create_sprint, mutation)
-_mount(Task, "list_tasks", list_tasks, query)
-_mount(Task, "get_tasks_by_sprint", get_tasks_by_sprint, query)
-_mount(Task, "create_task", create_task, mutation)
+    _mount(User, list_users, query)
+    _mount(User, create_user, mutation)
+    _mount(Sprint, list_sprints, query)
+    _mount(Sprint, create_sprint, mutation)
+    _mount(Task, list_tasks, query)
+    _mount(Task, get_tasks_by_sprint, query)
+    _mount(Task, create_task, mutation)
 
 
 # ── ErManager + Resolver (Phase 3) ──────────────────────────────────────
