@@ -141,3 +141,5 @@ from sqlmodel_nexus import build_dto_select
 stmt = build_dto_select(SprintSummary)
 stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
 ```
+
+> **Note:** When ORM relationships use `lazy="noload"` (the recommended pattern with ErManager + Resolver), this function provides minimal benefit since the only pruning is on scalar columns. You can achieve the same result with `select(Entity)` and `DTO.model_validate(entity)`. Use this function when the DTO selects a small subset of scalar columns from a wide table.

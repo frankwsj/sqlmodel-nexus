@@ -639,6 +639,16 @@ def build_dto_select(
         async with session_factory() as session:
             rows = (await session.exec(stmt)).all()
         dtos = [TaskSummary(**dict(row._mapping)) for row in rows]
+
+    Note:
+        When ORM relationships use ``lazy="noload"`` (the recommended
+        pattern with ErManager + Resolver), this function provides
+        minimal benefit since the only pruning is on scalar columns.
+        You can achieve the same result with ``select(Entity)`` and
+        ``DTO.model_validate(entity)``.
+
+        Use this function when the DTO selects a small subset of scalar
+        columns from a wide table and the column pruning is worthwhile.
     """
     from sqlmodel import select
 

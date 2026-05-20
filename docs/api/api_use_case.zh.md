@@ -141,3 +141,5 @@ from sqlmodel_nexus import build_dto_select
 stmt = build_dto_select(SprintSummary)
 stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
 ```
+
+> **注意：** 当 ORM 关系使用 `lazy="noload"` 时（ErManager + Resolver 的推荐模式），此函数的收益有限，因为裁剪仅限于标量列。可以用 `select(Entity)` + `DTO.model_validate(entity)` 实现相同效果。仅在 DTO 从宽表中选取少量标量列时，列裁剪才有实际价值。
