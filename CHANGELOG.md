@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.1.0
+
+### New Feature: UseCase MCP Selection 投影
+
+`call_use_case` 新增 `selection` 参数，允许 AI agent 指定返回哪些字段，优化 MCP 响应 payload 大小。使用类似 GraphQL 的 rootless selection 语法，如 `{ id title owner { name } }`。
+
+**用法：**
+
+```python
+# describe_service 返回 selection_usage 元数据和每个方法的 selection_supported / selection_example
+# call_use_case 传递 selection 过滤响应
+result = await call_use_case(
+    app_name="project",
+    service_name="SprintService",
+    method_name="get_sprint",
+    params='{"sprint_id": 1}',
+    selection="{ id task_count contributors { name } }",
+)
+```
+
+**Selection 规则：**
+- 仅支持返回 Pydantic BaseModel / list[BaseModel] 的方法
+- 嵌套 DTO 字段必须提供子选择
+- 标量、dict、Any 字段不可有子选择
+- 不支持 GraphQL arguments
+
+**Changes:**
+- `use_case/selection.py`: 新增 `SelectionError`、`apply_selection`、`parse_selection`、`build_subset_model` — 解析 selection 字符串并动态构建 Pydantic 子集模型进行投影
+- `use_case/introspector.py`: `describe_service` 输出新增 `selection_usage`（format/source/rules）和每个方法的 `selection_supported` / `selection_example`
+- `use_case/server.py`: `call_use_case` 新增 `selection` 参数；`describe_service` hint 包含 selection 使用提示；新增 `_get_return_annotation`
+- `use_case/__init__.py`、`__init__.py`: 导出 `SelectionError`
+- 新增 16 个测试覆盖 selection 投影和错误场景
+
 ## 2.0.0
 rename to nexusx
 
