@@ -803,6 +803,57 @@ wheels = [
 ]
 
 [[package]]
+name = "nexusx"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiodataloader" },
+    { name = "fastapi" },
+    { name = "graphql-core" },
+    { name = "greenlet" },
+    { name = "jinja2" },
+    { name = "pydantic" },
+    { name = "sqlmodel" },
+    { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/2c/a2d9bb5030729b9dc35c6d3abe8b1ea1a6f3f08ec5af88971db5ceddc7fd/nexusx-2.0.0.tar.gz", hash = "sha256:2a0c09aa612541ed4b2ca8acaff37825fd49df67cb4941a4064416426982bf71", size = 1000348, upload-time = "2026-05-21T00:07:24.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/e0/1e624d268b459048c913cde8ec43586e22c13455ba441c777bdf0ced7c36/nexusx-2.0.0-py3-none-any.whl", hash = "sha256:4f9f951b2c1452ccff9547917893e175699beae4cb549719e7a424de42fdb16c", size = 669840, upload-time = "2026-05-21T00:07:22.86Z" },
+]
+
+[[package]]
+name = "nexusx-template"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "fastapi" },
+    { name = "fastmcp" },
+    { name = "nexusx" },
+    { name = "sqlmodel" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite" },
+    { name = "fastapi" },
+    { name = "fastmcp", specifier = ">=3.2.4" },
+    { name = "nexusx", specifier = ">=1.6.0" },
+    { name = "pytest", marker = "extra == 'test'" },
+    { name = "pytest-asyncio", marker = "extra == 'test'" },
+    { name = "sqlmodel" },
+    { name = "uvicorn" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "openapi-pydantic"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1349,56 +1400,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/64/0d/26ec1329960ea9430
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/c7/10c60af0607ab6fa136264f7f39d205932218516226d38585324ffda705d/sqlmodel-0.0.38-py3-none-any.whl", hash = "sha256:84e3fa990a77395461ded72a6c73173438ce8449d5c1c4d97fbff1b1df692649", size = 27294, upload-time = "2026-04-02T21:03:56.406Z" },
 ]
-
-[[package]]
-name = "sqlmodel-nexus"
-version = "1.9.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiodataloader" },
-    { name = "fastapi" },
-    { name = "graphql-core" },
-    { name = "greenlet" },
-    { name = "jinja2" },
-    { name = "sqlmodel" },
-    { name = "uvicorn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/e6/99791dc8b60148a28789069a11b0c4e90e8cedf1ade977875e72570e3dcb/sqlmodel_nexus-1.9.2.tar.gz", hash = "sha256:eb6168128ecbaa59e55760e724248f47ba0600bfd5077ba25a6e358fec4f89ed", size = 919018, upload-time = "2026-05-15T13:06:56.788Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/47/ff69b28d8a9f2cc6450dd5f8171651a64d218d11a7fcf4d3ba179afbe381/sqlmodel_nexus-1.9.2-py3-none-any.whl", hash = "sha256:d18378f4a8e0623c57dbb506f94e24aeb6b2e20a952be4e0962bc8e67de001f2", size = 670010, upload-time = "2026-05-15T13:06:54.705Z" },
-]
-
-[[package]]
-name = "sqlmodel-nexus-template"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiosqlite" },
-    { name = "fastapi" },
-    { name = "fastmcp" },
-    { name = "sqlmodel" },
-    { name = "sqlmodel-nexus" },
-    { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosqlite" },
-    { name = "fastapi" },
-    { name = "fastmcp", specifier = ">=3.2.4" },
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-asyncio", marker = "extra == 'test'" },
-    { name = "sqlmodel" },
-    { name = "sqlmodel-nexus", specifier = ">=1.6.0" },
-    { name = "uvicorn" },
-]
-provides-extras = ["test"]
 
 [[package]]
 name = "sse-starlette"
