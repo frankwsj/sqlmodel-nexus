@@ -1,7 +1,13 @@
 # Changelog
 
+## 2.0
+
 ## 2.0.0
 rename to nexusx
+
+## 2.0.1
+
+- fix primitive value in loader relationships
 
 ## 1.10.1
 

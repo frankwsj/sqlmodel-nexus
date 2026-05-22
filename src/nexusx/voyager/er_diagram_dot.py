@@ -26,6 +26,11 @@ from nexusx.voyager.type_helper import (
 ARROW = "=>"
 
 
+def _is_model_like_target(target: type) -> bool:
+    """Return True if target can be rendered as a schema node in ER diagram."""
+    return hasattr(target, 'model_fields') and hasattr(target, '__name__')
+
+
 def _get_return_type_name(func) -> str:
     """Extract return type annotation as a readable string."""
     try:
@@ -167,6 +172,8 @@ class ErDiagramDotBuilder:
 
         # 2. Add relationship fields (name + target type)
         for rel_name, rel_info in rels.items():
+            if not _is_model_like_target(rel_info.target_entity):
+                continue
             target_type = rel_info.target_entity.__name__
             type_name = f'list[{target_type}]' if rel_info.is_list else target_type
             fields.append(FieldInfo(
@@ -185,6 +192,9 @@ class ErDiagramDotBuilder:
         rel_info: RelationshipInfo,
     ) -> None:
         """Add a Link for a single relationship."""
+        if not _is_model_like_target(rel_info.target_entity):
+            return
+
         source_name = full_class_name(entity_kls)
         target_name = full_class_name(rel_info.target_entity)
 
