@@ -22,6 +22,8 @@
 
 ## 一个直觉：模型已经描述了一切
 
+在 Python 后端开发中，[SQLModel](https://sqlmodel.tiangolo.com/) 的核心优势是同构——一个类既是 ORM 模型（定义数据库表），又是 Pydantic 模型（定义数据校验）。你的项目中大概率已经有了类似这样的模型定义：
+
 看这段代码（来自 `models.py`）：
 
 ```python
@@ -49,7 +51,7 @@ class Order(SQLModel, table=True):
 - **关系**：Customer → Order 一对多，Order → Item 一对多
 - **业务语义**：status 的值域，tier 的含义
 
-再看业务方法（来自 `services.py`）：
+再看业务方法——nexusx 提供了 `UseCaseService` 基类，你只需要用 `@query` 和 `@mutation` 装饰器标记方法（来自 `services.py`）：
 
 ```python
 class OrderService(UseCaseService):
