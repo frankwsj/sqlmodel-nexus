@@ -84,6 +84,15 @@ def _get_all_relationship_names(entity: type[SQLModel]) -> set[str]:
     return orm_names | custom_names
 
 
+def _get_pk_field_names(entity: type[SQLModel]) -> list[str]:
+    """Get primary key field names from a SQLModel entity."""
+    pk_names: list[str] = []
+    for field_name, field_info in entity.model_fields.items():
+        if getattr(field_info, "primary_key", None) is True:
+            pk_names.append(field_name)
+    return pk_names
+
+
 def _get_sqlmodel_scalar_fields(entity: type[SQLModel]) -> dict[str, FieldInfo]:
     """Get only scalar fields from a SQLModel entity (exclude relationships and FK fields)."""
     relationship_names = _get_relationship_names(entity)
@@ -462,6 +471,27 @@ class SubsetMeta(type):
 
         _validate_subset_fields(subset_fields)
 
+        # Ensure subset_fields is mutable (tuple syntax yields a tuple)
+        subset_fields = list(subset_fields)
+
+        # Auto-include PK fields for DataLoader key resolution (ONETOMANY loading).
+        # Tracks PKs added against user's explicit omission so we can hide them
+        # from serialization output while keeping them available for the resolver.
+        _auto_excluded_pks: set[str] = set()
+        pk_fields = _get_pk_field_names(entity_kls)
+        if pk_fields:
+            # Detect which PKs the user explicitly excluded
+            user_omit: set[str] = set()
+            if isinstance(subset_info, SubsetConfig) and subset_info.omit_fields:
+                user_omit = set(subset_info.omit_fields)
+            existing_set = set(subset_fields)
+            for pk in pk_fields:
+                if pk not in existing_set:
+                    subset_fields.append(pk)
+                    existing_set.add(pk)
+                    if pk in user_omit:
+                        _auto_excluded_pks.add(pk)
+
         # Extract fields from entity
         field_infos = _extract_field_infos(entity_kls, subset_fields)
 
@@ -477,6 +507,15 @@ class SubsetMeta(type):
         field_definitions: dict[str, tuple[Any, Any]] = {}
         field_definitions.update(field_infos)
         field_definitions.update(extra_fields)
+
+        # Hide auto-included PKs that the user explicitly omitted from serialization
+        for pk in _auto_excluded_pks:
+            if pk in field_definitions:
+                _anno, fi = field_definitions[pk]
+                if isinstance(fi, FieldInfo):
+                    new_fi = copy.deepcopy(fi)
+                    new_fi.exclude = True
+                    field_definitions[pk] = (_anno, new_fi)
 
         # Apply SubsetConfig modifiers (excluded_fields, expose_as, send_to)
         # Applied after merge so it can reference both subset and extra fields
