@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1
+
+### Bug Fix: Merge v2.1.0 Selection 投影功能到 master
+
+v2.1.0（UseCase MCP Selection 投影）此前未正确 merge 到 master，导致 selection 功能缺失。本次合并将 selection 功能与 v2.2.0 的 PK/FK 修复统一到 master 分支。
+
 ## 2.2.0
 
 ### Bug Fix: DefineSubset PK/FK 字段处理
