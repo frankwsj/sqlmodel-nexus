@@ -349,6 +349,32 @@ def _type_to_param_schema(anno: Any) -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────
+# Auto-summary for services without docstring
+# ──────────────────────────────────────────────────
+
+
+def _auto_summary(service_cls: type[UseCaseService]) -> str:
+    """Generate a summary from methods' docstrings if the class has no docstring.
+
+    Falls back to: class name + method count.
+    """
+    doc = service_cls.__doc__
+    if doc and doc.strip():
+        return doc.strip()
+
+    methods = getattr(service_cls, USE_CASE_METHODS_ATTR, {})
+    descs: list[str] = []
+    for meta in methods.values():
+        if isinstance(meta, dict):
+            d = meta.get("description", "") or ""
+            if d.strip():
+                descs.append(d.strip())
+    if descs:
+        return "; ".join(descs[:3])
+    return f"{service_cls.__name__} — {len(methods)} methods"
+
+
+# ──────────────────────────────────────────────────
 # ServiceIntrospector
 # ──────────────────────────────────────────────────
 
@@ -386,7 +412,7 @@ class ServiceIntrospector:
             result.append(
                 {
                     "name": name,
-                    "description": service_cls.__doc__,
+                    "description": _auto_summary(service_cls),
                     "methods_count": len(getattr(service_cls, USE_CASE_METHODS_ATTR)),
                 }
             )
@@ -454,7 +480,7 @@ class ServiceIntrospector:
 
         return {
             "name": name,
-            "description": service_cls.__doc__,
+            "description": _auto_summary(service_cls),
             "methods": clean_methods,
             "types": types_str,
         }
