@@ -461,6 +461,12 @@ mcp = create_simple_mcp_server(base=SQLModel, name="My API")
 mcp.run()  # stdio mode
 ```
 
+Before pushing changes, run the same checks as CI:
+
+```bash
+./scripts/check-ci.sh
+```
+
 Tools: `get_schema()`, `graphql_query(query)`, `graphql_mutation(mutation)`.
 
 ### Multi-App MCP Server
