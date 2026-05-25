@@ -102,6 +102,8 @@ from nexusx import (
     UseCaseAppConfig,         # 应用配置（name, services, description, context_extractor）
     FromContext,              # 标记从 MCP context 注入的参数
     create_use_case_mcp_server, # 创建 4 层渐进式披露 MCP 服务器
+    create_flat_mcp_server,   # 创建扁平 MCP 服务器（每个方法一个 tool）
+    create_use_case_router,   # 创建 FastAPI 路由
     create_use_case_voyager,  # 创建 UseCase Voyager 可视化
 )
 

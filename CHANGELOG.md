@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.3.0
+
+### New Feature: Flat MCP Server
+
+新增 `create_flat_mcp_server()` — 扁平化 MCP 服务器，每个 `@query`/`@mutation` 方法直接注册为独立 MCP tool，替代 4 层渐进披露模式。适合方法数量较少的场景，LLM 可一步到位调用。
+
+**用法：**
+
+```python
+from nexusx import UseCaseAppConfig, create_flat_mcp_server
+
+mcp = create_flat_mcp_server(
+    apps=[
+        UseCaseAppConfig(
+            name="order_system",
+            services=[OrderService, CustomerService, ProductService],
+        ),
+    ],
+)
+mcp.run()
+```
+
+**特性：**
+- 每个 `@query`/`@mutation` 方法注册为独立 tool，命名 `{ServiceName}_{method_name}`
+- 方法参数从 Python 签名直接映射（排除 `cls` 和 `FromContext`），支持 `selection` 投影
+- 每个 app 一个 MCP resource（`nexusx://{app_name}`），包含所有 service 的方法签名 + SDL 类型定义
+- `enable_mutation=False` 过滤 mutation tools
+- Tool 碰撞时自动加 app 前缀
+
+**新增文件：**
+- `src/nexusx/use_case/flat_server.py` — `create_flat_mcp_server` 及 tool/resource 注册
+
+**Changes：**
+- `use_case/__init__.py`、`__init__.py`: 导出 `create_flat_mcp_server`
+- `CLAUDE.md`: 更新公共 API 列表
+
 ## 2.2.1
 
 ### Bug Fix: Merge v2.1.0 Selection 投影功能到 master
