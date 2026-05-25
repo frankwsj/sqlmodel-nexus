@@ -19,6 +19,7 @@ class AppConfig(TypedDict, total=False):
         session_factory: Async session factory for DataLoader relationship loading
         query_description: Description for the Query type in GraphQL schema
         mutation_description: Description for the Mutation type in GraphQL schema
+        aliases: Optional alternate names that can route to this application
     """
 
     name: str
@@ -27,3 +28,4 @@ class AppConfig(TypedDict, total=False):
     session_factory: Callable | None
     query_description: str | None
     mutation_description: str | None
+    aliases: list[str]
