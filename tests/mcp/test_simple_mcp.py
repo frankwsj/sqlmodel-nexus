@@ -9,7 +9,6 @@ from sqlmodel import Field, SQLModel
 
 from nexusx import mutation, query
 from nexusx.mcp import create_simple_mcp_server
-from nexusx.mcp.server import config_simple_mcp_server
 from nexusx.mcp.managers.single_app_manager import SingleAppManager
 
 
@@ -409,11 +408,3 @@ class TestSimpleMCPIntegration:
         # Step 3: Mutation tool should not be available
         assert "graphql_mutation" not in tools
 
-
-class TestSimpleMCPServerBackwardCompatibility:
-    """Backward compatibility coverage for deprecated alias."""
-
-    def test_config_simple_mcp_server_alias_still_works(self) -> None:
-        mcp = config_simple_mcp_server(base=SimpleMCPMockBaseEntity)
-
-        assert mcp.name == "nexusx API"

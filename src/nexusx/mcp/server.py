@@ -212,19 +212,3 @@ def create_simple_mcp_server(
 
     return mcp
 
-
-def config_simple_mcp_server(
-    base: type,
-    name: str = "nexusx API",
-    desc: str | None = None,
-    allow_mutation: bool = False,
-    session_factory: Callable | None = None,
-) -> FastMCP:
-    """Backward-compatible alias for `create_simple_mcp_server`."""
-    return create_simple_mcp_server(
-        base=base,
-        name=name,
-        desc=desc,
-        allow_mutation=allow_mutation,
-        session_factory=session_factory,
-    )
