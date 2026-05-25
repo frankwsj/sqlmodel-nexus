@@ -37,12 +37,66 @@ class MultiAppManager:
             manager = MultiAppManager(apps)
             ```
         """
+        validated_apps = self._validate_apps(apps)
         self.apps: dict[str, AppResources] = {}
+        self.aliases: dict[str, str] = {}
 
-        # Initialize each application
-        for app_config in apps:
+        for app_config in validated_apps:
             resources = self._create_app_resources(app_config)
-            self.apps[app_config["name"]] = resources
+            app_name = app_config["name"]
+            self.apps[app_name] = resources
+            for alias in app_config.get("aliases", []):
+                self.aliases[alias] = app_name
+
+    @staticmethod
+    def _validate_apps(apps: list[AppConfig]) -> list[AppConfig]:
+        """Validate app configs and normalize aliases."""
+        if not apps:
+            raise ValueError("At least one app configuration is required")
+
+        seen_names: set[str] = set()
+        seen_aliases: set[str] = set()
+        validated_apps: list[AppConfig] = []
+
+        for index, app_config in enumerate(apps):
+            if "name" not in app_config or not app_config["name"]:
+                raise ValueError(f"App config at index {index} is missing required field 'name'")
+            if "base" not in app_config or app_config["base"] is None:
+                app_label = app_config.get("name", f"index {index}")
+                raise ValueError(
+                    f"App '{app_label}' is missing required field 'base'"
+                )
+
+            app_name = app_config["name"]
+            if app_name in seen_names:
+                raise ValueError(f"Duplicate app name '{app_name}' is not allowed")
+            seen_names.add(app_name)
+
+            aliases = app_config.get("aliases", [])
+            if aliases is None:
+                aliases = []
+            if not isinstance(aliases, list):
+                raise ValueError(f"App '{app_name}' aliases must be a list of strings")
+
+            normalized_aliases: list[str] = []
+            for alias in aliases:
+                if not isinstance(alias, str) or not alias:
+                    raise ValueError(
+                        f"App '{app_name}' aliases must contain only non-empty strings"
+                    )
+                if alias == app_name:
+                    raise ValueError(f"App '{app_name}' alias '{alias}' duplicates its name")
+                if alias in seen_names or alias in seen_aliases:
+                    raise ValueError(f"Alias '{alias}' is already used by another app")
+                seen_aliases.add(alias)
+                normalized_aliases.append(alias)
+
+            validated_app: AppConfig = dict(app_config)
+            validated_app["aliases"] = normalized_aliases
+            validated_apps.append(validated_app)
+
+        return validated_apps
+
 
     def _create_app_resources(self, config: AppConfig) -> AppResources:
         """Create resources for a single application.
@@ -93,23 +147,15 @@ class MultiAppManager:
             queries = app.tracer.list_operation_fields("Query")
             ```
         """
-        # Try exact match first
         if name in self.apps:
             return self.apps[name]
 
-        # Smart fallback: try removing common suffixes
-        # Handle cases like "todos_app" -> "todos", "blog_app" -> "blog"
-        normalized_name = name
-        if normalized_name.endswith("_app"):
-            normalized_name = normalized_name[:-4]  # Remove "_app"
-        elif normalized_name.endswith("-app"):
-            normalized_name = normalized_name[:-4]  # Remove "-app"
+        if name in self.aliases:
+            return self.apps[self.aliases[name]]
 
-        if normalized_name in self.apps:
-            return self.apps[normalized_name]
-
-        # No match found, provide helpful error message
         available = list(self.apps.keys())
+        if self.aliases:
+            available += [f"alias:{alias}" for alias in self.aliases]
         raise ValueError(
             f"App '{name}' not found. Available apps: {available}"
         )
