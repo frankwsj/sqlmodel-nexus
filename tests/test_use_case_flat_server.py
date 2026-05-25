@@ -256,39 +256,40 @@ class TestFlatResources:
         return _make_flat_server()
 
     @pytest.mark.asyncio
-    async def test_app_resource(self, server):
-        """nexusx://{app_name} returns app overview."""
+    async def test_single_resource_per_app(self, server):
+        """One resource per app containing all services and types."""
         result = await server.read_resource(f"nexusx://{APP_NAME}")
         content = str(result)
+        # All services included
         assert "UserService" in content
         assert "TaskService" in content
-        assert "Services" in content
-
-    @pytest.mark.asyncio
-    async def test_service_resource(self, server):
-        """nexusx://{app_name}/{service_name} returns method signatures + types."""
-        result = await server.read_resource(f"nexusx://{APP_NAME}/UserService")
-        content = str(result)
+        # All methods included
         assert "list_users" in content
         assert "get_user" in content
         assert "create_user" in content
+        assert "list_tasks" in content
+        assert "get_task" in content
+        assert "delete_task" in content
+        # SDL types included
         assert "UserDTO" in content
-
-    @pytest.mark.asyncio
-    async def test_service_resource_has_sdl_types(self, server):
-        """Service resource includes SDL type definitions."""
-        result = await server.read_resource(f"nexusx://{APP_NAME}/TaskService")
-        content = str(result)
         assert "TaskDTO" in content
-        assert "UserDTO" in content
 
     @pytest.mark.asyncio
-    async def test_service_resource_mutation_filtered(self):
-        """Service resource filters mutations when disabled."""
+    async def test_resource_has_sdl_section(self, server):
+        """Resource includes SDL type definitions section."""
+        result = await server.read_resource(f"nexusx://{APP_NAME}")
+        content = str(result)
+        assert "Type Definitions (SDL)" in content
+        assert "```graphql" in content
+
+    @pytest.mark.asyncio
+    async def test_resource_mutation_filtered(self):
+        """Resource filters mutations when disabled."""
         server = _make_flat_server(enable_mutation=False)
-        result = await server.read_resource(f"nexusx://{APP_NAME}/UserService")
+        result = await server.read_resource(f"nexusx://{APP_NAME}")
         content = str(result)
         assert "create_user" not in content
+        assert "delete_task" not in content
         assert "list_users" in content
 
 

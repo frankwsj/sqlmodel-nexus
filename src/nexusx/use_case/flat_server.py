@@ -72,91 +72,67 @@ def create_flat_mcp_server(
 
 
 def _register_resources(mcp: Any, manager: UseCaseManager) -> None:
-    """Register per-app and per-service MCP resources."""
+    """Register one MCP resource per app with all services and type definitions."""
     for app_name, app in manager.apps.items():
         _register_app_resource(mcp, app, app_name)
-        for service_name in app.services:
-            _register_service_resource(mcp, app, app_name, service_name)
 
 
 def _register_app_resource(
     mcp: Any, app: Any, app_name: str
 ) -> None:
-    """Register a resource describing an app's services."""
+    """Register a single resource with all services, methods, and SDL types."""
 
     def _make_resource(_app: Any = app, _name: str = app_name) -> Callable[[], str]:
         def _app_resource() -> str:
-            services_info = _app.introspector.list_services()
             lines = [f"# {_name}", ""]
             if _app.description:
                 lines.append(_app.description)
                 lines.append("")
-            lines.append("## Services")
-            for svc in services_info:
-                lines.append(
-                    f"- **{svc['name']}** ({svc['methods_count']} methods): "
-                    f"{svc['description']}"
-                )
-            lines.append("")
-            lines.append(
-                f"Read `nexusx://{_name}/{{service_name}}` for method signatures "
-                f"and type definitions."
-            )
+
+            all_types: list[str] = []
+
+            for service_name in _app.services:
+                info = _app.introspector.describe_service(service_name)
+                if info is None:
+                    continue
+
+                if not _app.enable_mutation:
+                    info["methods"] = [
+                        m for m in info.get("methods", []) if m.get("kind") != "mutation"
+                    ]
+
+                lines.append(f"## {service_name}")
+                desc = info.get("description", "")
+                if desc:
+                    lines.append(desc)
+                    lines.append("")
+
+                for m in info.get("methods", []):
+                    kind_tag = " [MUTATION]" if m.get("kind") == "mutation" else ""
+                    lines.append(f"### {m['name']}{kind_tag}")
+                    if m.get("description"):
+                        lines.append(m["description"])
+                    sig = m.get("signature_sdl") or m.get("signature", "")
+                    if sig:
+                        lines.append(f"Signature: `{sig}`")
+                    if m.get("selection_supported"):
+                        lines.append(f"Selection example: `{m.get('selection_example', '')}`")
+                    lines.append("")
+
+                types_str = info.get("types", "")
+                if types_str:
+                    all_types.append(f"# {service_name}\n{types_str}")
+
+            if all_types:
+                lines.append("## Type Definitions (SDL)")
+                lines.append("```graphql")
+                lines.append("\n\n".join(all_types))
+                lines.append("```")
+
             return "\n".join(lines)
         return _app_resource
 
     mcp.resource(f"nexusx://{app_name}")(_make_resource())  # type: ignore[misc]
-
-
-def _register_service_resource(
-    mcp: Any, app: Any, app_name: str, service_name: str
-) -> None:
-    """Register a resource with method signatures and SDL types for a service."""
-
-    def _make_resource(
-        _app: Any = app, _app_name: str = app_name, _svc_name: str = service_name
-    ) -> Callable[[], str]:
-        def _service_resource() -> str:
-            info = _app.introspector.describe_service(_svc_name)
-            if info is None:
-                return f"Service '{_svc_name}' not found."
-
-            if not _app.enable_mutation:
-                info["methods"] = [
-                    m for m in info.get("methods", []) if m.get("kind") != "mutation"
-                ]
-
-            lines = [f"# {_svc_name}", ""]
-            desc = info.get("description", "")
-            if desc:
-                lines.append(desc)
-                lines.append("")
-
-            lines.append("## Methods")
-            for m in info.get("methods", []):
-                kind_tag = " [MUTATION]" if m.get("kind") == "mutation" else ""
-                lines.append(f"### {m['name']}{kind_tag}")
-                if m.get("description"):
-                    lines.append(m["description"])
-                sig = m.get("signature_sdl") or m.get("signature", "")
-                if sig:
-                    lines.append(f"Signature: `{sig}`")
-                if m.get("selection_supported"):
-                    lines.append(f"Selection example: `{m.get('selection_example', '')}`")
-                lines.append("")
-
-            types_str = info.get("types", "")
-            if types_str:
-                lines.append("## Type Definitions (SDL)")
-                lines.append("```graphql")
-                lines.append(types_str)
-                lines.append("```")
-
-            return "\n".join(lines)
-
-        return _service_resource
-
-    mcp.resource(f"nexusx://{app_name}/{service_name}")(_make_resource())  # type: ignore[misc]
 
 
 # ──────────────────────────────────────────────────
