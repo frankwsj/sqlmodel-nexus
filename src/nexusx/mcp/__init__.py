@@ -52,5 +52,5 @@ __all__ = [
 ]
 
 from nexusx.mcp.managers import AppResources, MultiAppManager, SingleAppManager
-from nexusx.mcp.server import create_simple_mcp_server, create_mcp_server
+from nexusx.mcp.server import create_mcp_server, create_simple_mcp_server
 from nexusx.mcp.types.app_config import AppConfig
