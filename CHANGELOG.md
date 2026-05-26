@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.1
+
+### Bug Fix: Python 3.14 (PEP 649/749) DefineSubset extra fields 丢失
+
+修复 `DefineSubset` 在 Python 3.14+ 上类体中声明的 extra fields（关系字段、派生字段）全部丢失的问题。
+
+**根因：** Python 3.14 实现 PEP 649/749，类体 namespace 中 `__annotations__` 变为 `None`，注解延迟存储在 `__annotate_func__` 中。`_extract_extra_fields` 读到空 dict，导致所有 extra fields 被忽略。
+
+**Changes:**
+- `src/nexusx/subset.py`: 新增 `_get_namespace_annotations()` compat helper，3.14+ 从 `__annotate_func__(1)` 获取 annotations dict，低版本继续用 `__annotations__`
+- 新增 `tests/test_py314_compat.py`: 6 个测试覆盖 scalar / relationship / derived / roundtrip / excluded 场景
+
 ## 2.3.0
 
 ### New Feature: Flat MCP Server

@@ -192,6 +192,21 @@ def _validate_subset_fields(fields: Any) -> None:
         seen.add(f)
 
 
+def _get_namespace_annotations(namespace: dict[str, Any]) -> dict[str, Any]:
+    """Extract annotations from class namespace, compatible with Python 3.14+.
+
+    Python 3.14 (PEP 649/749) stores annotations lazily in __annotate_func__
+    and sets __annotations__ to None in the class body namespace.
+    """
+    annotations = namespace.get("__annotations__")
+    if isinstance(annotations, dict):
+        return annotations
+    annotate_func = namespace.get("__annotate_func__")
+    if annotate_func is not None:
+        return annotate_func(1)
+    return {}
+
+
 def _extract_extra_fields(
     namespace: dict[str, Any],
     subset_field_names: set[str],
@@ -205,7 +220,7 @@ def _extract_extra_fields(
     Subset fields can be re-annotated with metadata like ExposeAs/SendTo
     without conflicting with the subset definition.
     """
-    annotations: dict[str, Any] = namespace.get("__annotations__", {}) or {}
+    annotations: dict[str, Any] = _get_namespace_annotations(namespace)
     extras: dict[str, tuple[Any, Any]] = {}
     overrides: dict[str, Any] = {}
 
