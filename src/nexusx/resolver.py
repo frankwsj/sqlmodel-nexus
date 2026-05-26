@@ -362,7 +362,6 @@ class Resolver:
         if source_entity is None:
             _auto_load_cache[cache_key] = []
             return []
-            return []
 
         # Get relationship names from source entity
         entity_rels = self._registry.get_relationships(source_entity)
