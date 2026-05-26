@@ -966,3 +966,82 @@ class TestBuildDtoSelect:
         for dto in result:
             assert dto.owner is not None
             assert dto.owner.name in {"Alice", "Bob"}
+
+
+# ──────────────────────────────────────────────────────────
+# P0/P1: Subset validation, PK auto-inject, FK handling
+# ──────────────────────────────────────────────────────────
+
+
+class TestSubsetValidation:
+    def test_subset_dict_type_raises(self):
+        """__subset__ with a dict should raise ValueError."""
+
+        with pytest.raises(ValueError, match="tuple of"):
+            class Bad(DefineSubset):
+                __subset__ = {"entity": SampleUser, "fields": ["id"]}  # type: ignore
+
+    def test_subset_wrong_length_tuple_raises(self):
+        """__subset__ with 3-element tuple should raise ValueError."""
+
+        with pytest.raises(ValueError, match="tuple of"):
+            class Bad(DefineSubset):
+                __subset__ = (SampleUser, ("id",), "extra")  # type: ignore
+
+    def test_subsetconfig_fields_illegal_type_raises(self):
+        """SubsetConfig with fields as int should raise ValidationError."""
+        from pydantic import ValidationError
+        from nexusx.subset import SubsetConfig
+
+        with pytest.raises(ValidationError):
+            SubsetConfig(kls=SampleUser, fields=42)  # type: ignore
+
+
+class TestPKAutoInject:
+    def test_pk_auto_included_even_if_not_in_fields(self):
+        """PK field should be auto-included for DataLoader key resolution."""
+
+        class UserDTO(DefineSubset):
+            __subset__ = (SampleUser, ("name",))
+
+        assert "id" in UserDTO.model_fields
+        dto = UserDTO(id=1, name="Alice")
+        assert dto.id == 1
+
+    def test_pk_auto_excluded_when_omitted(self):
+        """Auto-included PK should be excluded from serialization when in omit_fields."""
+        from nexusx.subset import SubsetConfig
+
+        class UserDTO(DefineSubset):
+            __subset__ = SubsetConfig(kls=SampleUser, omit_fields=["email", "id"])
+
+        dto = UserDTO(name="Alice", id=1)
+        dumped = dto.model_dump()
+        # id is auto-included but excluded from serialization because it's in omit_fields
+        assert "id" not in dumped
+        assert "email" not in dumped
+        assert dumped["name"] == "Alice"
+        # But id should still be accessible as attribute for DataLoader
+        assert dto.id == 1
+
+
+class TestFKFieldHandling:
+    def test_fk_field_explicitly_included(self):
+        """Explicitly included FK field should appear in subset."""
+        from tests.conftest import FixtureTask
+
+        class TaskDTO(DefineSubset):
+            __subset__ = (FixtureTask, ("id", "title", "owner_id"))
+
+        assert "owner_id" in TaskDTO.model_fields
+        dto = TaskDTO(id=1, title="T", owner_id=5)
+        assert dto.owner_id == 5
+
+    def test_fk_field_not_in_fields_excluded(self):
+        """FK fields not in __subset__ should not appear."""
+        from tests.conftest import FixtureTask
+
+        class TaskDTO(DefineSubset):
+            __subset__ = (FixtureTask, ("id", "title"))
+
+        assert "owner_id" not in TaskDTO.model_fields

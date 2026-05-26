@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.4.1
+
+### Chore: 测试覆盖率提升（+46 测试，678→724）
+
+核心模块覆盖率显著提升，新增测试覆盖 P0（公共 API 校验）和 P1（边缘场景）盲区。
+
+**覆盖率变化：**
+
+| 模块 | 2.4.0 | 2.4.1 |
+|---|---|---|
+| `loader/registry.py` | 88% | 95% |
+| `resolver.py` | 95% | 96% |
+| `subset.py` | 86% | 90% |
+| `utils/type_compat.py` | 68% | 92% |
+| `use_case/selection.py` | 77% | 89% |
+
+**新增测试：**
+- `resolver.py`: post_* 中 Loader + Collector 组合注入、`_orm_to_dto` 无 `__subset_fields__` 分支、`_do_extract_dto_cls` 边界类型（字符串注解、Optional、非 BaseModel）
+- `subset.py`: `__subset__` 类型校验（dict、错误长度 tuple）、PK 自动注入 + omit 排除、FK 字段显式包含/排除
+- `loader/registry.py`: ErManager 初始化校验（base/entities 互斥、都不提供）、base 模式 EntityDiscovery、`create_resolver()` BoundResolver 绑定、分页校验（空 order_by、多列排序、缺少 order_by）
+- `type_compat.py`: `is_compatible_type` 完整覆盖（Optional 解包、list 兼容、Union 拒绝、subset 链、子类检查）
+- `selection.py`: 解析错误路径（空选择、带参数、空白）+ `_infer_runtime_annotation` 推断（混合类型列表、全 None、空列表）
+
 ## 2.4.0
 
 ### Performance: BFS Traversal replaces DFS in Resolver

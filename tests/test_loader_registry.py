@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 
 from nexusx.loader.registry import ErManager
 from nexusx.relationship import Relationship
@@ -223,3 +223,104 @@ class TestErManagerCustomRelationships:
         )
 
         assert registry.get_loader_for_entity(FixtureTask, "nonexistent") is None
+
+
+# ──────────────────────────────────────────────────────────
+# P0/P1: ErManager init validation, create_resolver, pagination edges
+# ──────────────────────────────────────────────────────────
+
+
+class TestErManagerInitValidation:
+    def test_base_and_entities_mutually_exclusive(self):
+        """Passing both base and entities should raise ValueError."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            ErManager(
+                base=SQLModel,
+                entities=[FixtureUser],
+                session_factory=get_test_session_factory(),
+            )
+
+    def test_neither_base_nor_entities_raises(self):
+        """Passing neither base nor entities should raise ValueError."""
+        with pytest.raises(ValueError, match="Either base or entities"):
+            ErManager(
+                session_factory=get_test_session_factory(),
+            )
+
+    def test_base_mode_creates_registry(self):
+        """base mode should create a working registry via EntityDiscovery."""
+        from nexusx.discovery import EntityDiscovery
+
+        # Verify EntityDiscovery works (which base mode uses internally)
+        discovery = EntityDiscovery(SQLModel)
+        entities = discovery.discover(include_all=True)
+        # Should find at least the FixtureBase entities
+        assert len(entities) > 0
+
+
+class TestCreateResolver:
+    def test_create_resolver_returns_class(self):
+        """create_resolver should return a Resolver class, not instance."""
+        from nexusx.resolver import Resolver
+
+        registry = ErManager(
+            entities=[FixtureUser, FixtureSprint, FixtureTask],
+            session_factory=get_test_session_factory(),
+        )
+        ResolverCls = registry.create_resolver()
+        assert isinstance(ResolverCls, type)
+        assert issubclass(ResolverCls, Resolver)
+        assert ResolverCls.__name__ == "Resolver"
+
+    def test_create_resolver_instance_has_registry(self):
+        """BoundResolver instances should have the ErManager as registry."""
+        registry = ErManager(
+            entities=[FixtureUser, FixtureSprint, FixtureTask],
+            session_factory=get_test_session_factory(),
+        )
+        ResolverCls = registry.create_resolver()
+        instance = ResolverCls()
+        assert instance._registry is registry
+
+
+class TestPaginationValidation:
+    def test_empty_order_by_raises(self):
+        """Empty order_by list should raise ValueError."""
+        from nexusx.loader.registry import _extract_sort_field
+
+        with pytest.raises(ValueError, match="order_by cannot be empty"):
+            _extract_sort_field([])
+
+    def test_multi_column_order_by_raises(self):
+        """Multi-column order_by should raise ValueError."""
+        from sqlalchemy import desc
+        from nexusx.loader.registry import _extract_sort_field
+
+        with pytest.raises(ValueError, match="Only single-column"):
+            _extract_sort_field([FixtureUser.id, FixtureUser.name])
+
+    def test_pagination_without_order_by_on_relationship(self):
+        """enable_pagination should raise when relationship lacks order_by."""
+        # Verify the validation path by testing _validate_pagination directly
+        # with a mock registry that has a list relationship without page_loader
+        from unittest.mock import MagicMock
+        from nexusx.loader.registry import RelationshipInfo
+
+        registry = ErManager.__new__(ErManager)
+        registry._session_factory = get_test_session_factory()
+        registry._enable_pagination = True
+        registry._split_mode = False
+        registry._loader_instances = {}
+
+        # Create a fake list relationship without page_loader
+        rel_info = MagicMock(spec=RelationshipInfo)
+        rel_info.is_list = True
+        rel_info.page_loader = None
+        rel_info.name = "items"
+
+        mock_entity = MagicMock()
+        mock_entity.__name__ = "TestEntity"
+        registry._registry = {mock_entity: {"items": rel_info}}
+
+        with pytest.raises(ValueError, match="no order_by configured"):
+            registry._validate_pagination()

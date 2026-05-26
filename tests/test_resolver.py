@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from nexusx.resolver import Resolver
+from nexusx.resolver import Loader, Resolver
 
 # ──────────────────────────────────────────────────────────
 # Test: basic resolve_* with custom loaders
@@ -576,3 +576,123 @@ class TestBfsEdgeCases:
         result = await Resolver().resolve(parent)
         assert result.children[0].parent_prefix == "HELLO"
         assert result.children[1].parent_prefix == "HELLO"
+
+
+# ──────────────────────────────────────────────────────────
+# Test: P0 — post_* with Loader, _orm_to_dto, _do_extract_dto_cls
+# ──────────────────────────────────────────────────────────
+
+
+class TestPostWithLoader:
+    async def test_post_with_loader_dep(self):
+        """post_* should receive Loader-injected DataLoader."""
+
+        async def double_loader(keys):
+            return [k * 2 for k in keys]
+
+        class Item(BaseModel):
+            val: int
+            doubled: int = 0
+
+            def post_doubled(self, loader=Loader(double_loader)):
+                return loader.load(self.val)
+
+        result = await Resolver().resolve(Item(val=5))
+        assert result.doubled == 10
+
+    async def test_post_with_collector_and_loader(self):
+        """post_* should receive both Collector and Loader parameters."""
+
+        from nexusx.context import Collector, SendTo
+        from typing import Annotated
+
+        async def tag_loader(keys):
+            return [f"tag_{k}" for k in keys]
+
+        class Child(BaseModel):
+            val: int
+            tag: Annotated[str, SendTo("vals")] = ""
+
+            def post_tag(self, loader=Loader(tag_loader)):
+                return loader.load(self.val)
+
+        class Parent(BaseModel):
+            children: list[Child] = []
+            collected_vals: list[str] = []
+            summary: str = ""
+
+            def post_collected_vals(self, collector=Collector("vals")):
+                return collector.values()
+
+            def post_summary(self, loader=Loader(tag_loader)):
+                return loader.load(99)
+
+        parent = Parent(children=[Child(val=1), Child(val=2)])
+        result = await Resolver().resolve(parent)
+
+        assert result.children[0].tag == "tag_1"
+        assert result.children[1].tag == "tag_2"
+        assert "tag_1" in result.collected_vals
+        assert "tag_2" in result.collected_vals
+        assert result.summary == "tag_99"
+
+
+class TestOrmToDto:
+    def test_orm_to_dto_without_subset_fields(self):
+        """_orm_to_dto should use model_validate when no __subset_fields__."""
+
+        class PlainDTO(BaseModel):
+            name: str
+            value: int
+
+        # model_validate accepts dict-like objects
+        result = Resolver._orm_to_dto({"name": "test", "value": 42}, PlainDTO)
+        assert result.name == "test"
+        assert result.value == 42
+
+
+class TestExtractDtoCls:
+    def test_string_annotation_returns_none(self):
+        """String annotations should return None."""
+        from pydantic.fields import FieldInfo
+
+        fi = FieldInfo(annotation="SomeForwardRef")
+        assert Resolver()._extract_dto_cls(fi) is None
+
+    def test_pure_none_type_returns_none(self):
+        """type(None) as annotation should return None."""
+        from pydantic.fields import FieldInfo
+
+        fi = FieldInfo(annotation=type(None))
+        assert Resolver()._extract_dto_cls(fi) is None
+
+    def test_plain_int_returns_none(self):
+        """Non-BaseModel types should return None."""
+        from pydantic.fields import FieldInfo
+
+        fi = FieldInfo(annotation=int)
+        assert Resolver()._extract_dto_cls(fi) is None
+
+    def test_basemodel_in_optional_returns_cls(self):
+        """BaseModel inside Optional should be extracted."""
+
+        class MyDTO(BaseModel):
+            x: int
+
+        from pydantic.fields import FieldInfo
+
+        fi = FieldInfo(annotation=MyDTO | None)
+        result = Resolver()._extract_dto_cls(fi)
+        assert result is MyDTO
+
+    def test_basemodel_in_list_returns_cls(self):
+        """BaseModel inside list should be extracted."""
+
+        class MyDTO(BaseModel):
+            x: int
+
+        from pydantic.fields import FieldInfo
+
+        fi = FieldInfo(annotation=list[MyDTO])
+        result = Resolver()._extract_dto_cls(fi)
+        assert result is MyDTO
