@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.4.0
+
+### Performance: BFS Traversal replaces DFS in Resolver
+
+将 Resolver 遍历引擎从 DFS 替换为 BFS，实现 DataLoader 的全量批量加载。
+
+**根因：** DFS 逐节点串行调用 resolve_*，DataLoader 每个 tick 只能收集一个 key，无法发挥批量加载优势。BFS 将同一层所有 resolve_* 方法通过 `asyncio.gather` 并发执行，DataLoader 在单个 tick 内收集所有 key，一次性发出批量查询。
+
+**Changes:**
+- `src/nexusx/resolver.py`: 重写遍历引擎为 BFS `_process_level`，5 阶段流水线：Phase 0 元数据准备 → Phase 1 resolve_* 并行执行 → Phase 2 递归子层 → Phase 3 post_* 执行 → Phase 4 SendTo 收集
+- `_batch_auto_load`: 新增批量 auto-load，按关系分组收集 FK 值，使用 `load_many` 一次性加载
+- `Resolver.resolve()` 移除 `mode` 参数，统一使用 BFS
+- 新增 `_WorkItem` 数据结构传递节点 + 父级上下文 + collector 快照
+
+### Bug Fix: Auto-load 子节点重复遍历
+
+修复 `_batch_auto_load` 设置字段后，existing-fields scan 再次拾取这些字段导致子节点被加入 `next_level` 两次的问题。auto-load + SendTo 组合场景下 Collector 会收集重复值。
+
+**Changes:**
+- `src/nexusx/resolver.py`: `_batch_auto_load` 返回已加载的 `(id(node), field_name)` 集合，existing-fields scan 跳过这些字段
+- 新增测试覆盖 auto-load + SendTo 去重、resolve_* ancestor_context、SendTo 多 Collector、空列表/非 BaseModel/tuple/混合列表输入、resolve_* 返回 tuple
+
+### Chore: Benchmark 精简
+
+移除 raw dict benchmark（`bench_raw_*`），仅保留 Pydantic DTO vs nexusx DefineSubset 对比。
+
 ## 2.3.1
 
 ### Bug Fix: Python 3.14 (PEP 649/749) DefineSubset extra fields 丢失
