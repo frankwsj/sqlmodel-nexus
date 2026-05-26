@@ -72,7 +72,7 @@ Phase 0 全部确认后、进入 Phase 1 之前，在 `story.md` 中补充 `## O
 
 1. **创建 spec 目录**: 用户首次描述需求时，在项目根目录创建 `spec/<编号>-<需求简述>/`，将用户原始需求写入 `story.md`，预建 phase0 ~ phase4 空文件
 2. **Phase 0**: 按 SKILL.md 中 Step 0-1 ~ 0-7 逐步与用户确认。确认后写入 `phase0.md`，补充 `story.md` 的 Overview Design。用户全部确认后才继续
-3. **创建项目结构**: 目录 + pyproject.toml（依赖 nexusx）
+3. **创建项目结构**: 目录 + pyproject.toml（依赖 nexusx）。**注意**：nexusx 默认不包含 ASGI 服务器，pyproject.toml 需额外添加 `uvicorn` 和 `aiosqlite` 依赖，启动命令为 `uvicorn src.main:app --reload`
 4. **Phase 1~4**: 依次读取对应 phase 文件（`phases/phase1.md` ~ `phases/phase4.md`），按 V 型模型执行。每个阶段完成后暂停等用户确认
 
 ## 迭代功能的处理

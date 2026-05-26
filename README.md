@@ -1,8 +1,6 @@
 # nexusx
 
-Build AI-friendly Application.
-
-From Idea to POC, from POC to Product.
+A framework for business layer
 
 [![pypi](https://img.shields.io/pypi/v/nexusx.svg)](https://pypi.python.org/pypi/nexusx)
 [![PyPI Downloads](https://static.pepy.tech/badge/nexusx/month)](https://pepy.tech/projects/nexusx)
