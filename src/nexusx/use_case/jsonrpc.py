@@ -11,12 +11,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, get_type_hints
 
 from fastapi import APIRouter, Request
+from pydantic import TypeAdapter
 from starlette.responses import JSONResponse
 
 from nexusx.use_case.business import USE_CASE_METHODS_ATTR
+from nexusx.use_case.introspector import ServiceIntrospector
 from nexusx.use_case.manager import UseCaseManager
 from nexusx.use_case.router import _get_from_context_params
 from nexusx.use_case.server import _coerce_kwargs, _serialize_result
@@ -112,6 +114,111 @@ async def _execute_method(
 
 
 # ---------------------------------------------------------------------------
+# RPC introspection (rpc.discover / rpc.describe / rpc.schema)
+# ---------------------------------------------------------------------------
+
+
+def _build_full_schema(config: UseCaseAppConfig) -> dict[str, Any]:
+    """Build complete JSON Schema for all methods and DTO types.
+
+    Returns a dict with ``methods`` (per-method param/result schemas) and
+    ``$defs`` (shared DTO type definitions).  Clients can feed this directly
+    into codegen tools (datamodel-code-generator, json-schema-to-typescript, …).
+    """
+    methods: dict[str, Any] = {}
+    defs: dict[str, Any] = {}
+
+    for service_cls in config.services:
+        service_methods = getattr(service_cls, USE_CASE_METHODS_ATTR, {})
+        for method_name, meta in service_methods.items():
+            kind = meta.get("kind", "query") if isinstance(meta, dict) else "query"
+            if not config.enable_mutation and kind == "mutation":
+                continue
+
+            description = meta.get("description", "") if isinstance(meta, dict) else ""
+            method = getattr(service_cls, method_name)
+            func = method.__func__ if isinstance(method, classmethod) else method
+
+            try:
+                hints = get_type_hints(func, include_extras=True)
+            except Exception:
+                hints = {}
+
+            try:
+                sig = inspect.signature(func)
+            except (ValueError, TypeError):
+                continue
+
+            # Params
+            params_schema: dict[str, Any] = {}
+            for pname, param in sig.parameters.items():
+                if pname == "cls":
+                    continue
+                anno = hints.get(pname, param.annotation)
+                if anno is inspect.Parameter.empty:
+                    continue
+                try:
+                    ps = TypeAdapter(anno).json_schema()
+                except Exception:
+                    continue
+                params_schema[pname] = {k: v for k, v in ps.items() if k != "$defs"}
+                defs.update(ps.get("$defs", {}))
+
+            # Result
+            return_anno = hints.get("return")
+            result_schema: dict[str, Any] = {}
+            if return_anno:
+                try:
+                    rs = TypeAdapter(return_anno).json_schema()
+                    result_schema = {k: v for k, v in rs.items() if k != "$defs"}
+                    defs.update(rs.get("$defs", {}))
+                except Exception:
+                    pass
+
+            methods[f"{service_cls.__name__}.{method_name}"] = {
+                "description": description,
+                "kind": kind,
+                "params": params_schema,
+                "result": result_schema,
+            }
+
+    return {"methods": methods, "$defs": defs}
+
+
+def _handle_rpc_method(
+    method_name: str,
+    params: dict[str, Any],
+    introspector: ServiceIntrospector,
+    full_schema: dict[str, Any],
+) -> Any | dict[str, Any]:
+    """Dispatch ``rpc.*`` system methods.  Returns result or error dict."""
+    if method_name == "discover":
+        return introspector.list_services()
+
+    if method_name == "describe":
+        service = params.get("service") if isinstance(params, dict) else None
+        if not service or not isinstance(service, str):
+            return _make_error(INVALID_PARAMS, "'service' parameter required")
+        info = introspector.describe_service(service)
+        if info is None:
+            return _make_error(
+                METHOD_NOT_FOUND,
+                f"Service '{service}' not found. "
+                f"Available: {[s['name'] for s in introspector.list_services()]}",
+            )
+        return info
+
+    if method_name == "schema":
+        return full_schema
+
+    return _make_error(
+        METHOD_NOT_FOUND,
+        f"Unknown rpc method '{method_name}'. "
+        f"Available: rpc.discover, rpc.describe, rpc.schema",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Request handling
 # ---------------------------------------------------------------------------
 
@@ -121,6 +228,8 @@ async def _handle_single_request(
     app: Any,
     context_extractor: Callable | None,
     request: Request,
+    introspector: ServiceIntrospector | None = None,
+    full_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Process a single JSON-RPC request dict and return a response dict."""
     req_id = req.get("id")
@@ -142,6 +251,16 @@ async def _handle_single_request(
         )
 
     service_name, method_name = method_str.split(".", 1)
+
+    # System methods: rpc.discover / rpc.describe / rpc.schema
+    if service_name == "rpc":
+        if introspector is None or full_schema is None:
+            return _make_error(INTERNAL_ERROR, "Introspection not available", req_id)
+        result = _handle_rpc_method(method_name, req.get("params", {}), introspector, full_schema)
+        # _handle_rpc_method may return an error dict
+        if isinstance(result, dict) and "error" in result and "jsonrpc" in result:
+            return {**result, "id": req_id}
+        return _make_result(result, req_id)
 
     # Validate params
     params = req.get("params", {})
@@ -208,6 +327,8 @@ def create_jsonrpc_router(
     manager = UseCaseManager([config])
     app = manager.get_app(config.name)
     ctx_extractor = context_extractor or config.context_extractor
+    introspector = ServiceIntrospector(config.services)
+    full_schema = _build_full_schema(config)
 
     @router.post(path)
     async def handle_rpc(request: Request) -> JSONResponse:
@@ -222,7 +343,12 @@ def create_jsonrpc_router(
             if not body:
                 return JSONResponse(_make_error(INVALID_REQUEST, "Empty batch"))
             results = await asyncio.gather(
-                *[_handle_single_request(r, app, ctx_extractor, request) for r in body]
+                *[
+                    _handle_single_request(
+                        r, app, ctx_extractor, request, introspector, full_schema
+                    )
+                    for r in body
+                ]
             )
             return JSONResponse(list(results))
 
@@ -230,7 +356,9 @@ def create_jsonrpc_router(
         if not isinstance(body, dict):
             return JSONResponse(_make_error(INVALID_REQUEST, "Request must be a JSON object"))
 
-        result = await _handle_single_request(body, app, ctx_extractor, request)
+        result = await _handle_single_request(
+            body, app, ctx_extractor, request, introspector, full_schema
+        )
         return JSONResponse(result)
 
     return router

@@ -331,3 +331,124 @@ class TestRouterConfig:
         client = TestClient(app)
         resp = client.post("/rpc", json=_rpc("ContextService.whoami"))
         assert resp.json()["result"]["id"] == 999
+
+
+# ──────────────────────────────────────────────────
+# Tests: rpc.discover
+# ──────────────────────────────────────────────────
+
+
+class TestRpcDiscover:
+    def test_returns_service_list(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.discover"))
+        assert resp.status_code == 200
+        body = resp.json()
+        services = body["result"]
+        assert len(services) == 2
+        names = {s["name"] for s in services}
+        assert names == {"UserService", "PingService"}
+        for s in services:
+            assert "description" in s
+            assert "methods_count" in s
+
+    def test_discover_with_no_mutation(self, no_mutation_client):
+        resp = no_mutation_client.post("/rpc", json=_rpc("rpc.discover"))
+        assert resp.status_code == 200
+        assert len(resp.json()["result"]) == 1
+
+    def test_discover_in_batch(self, client):
+        batch = [
+            _rpc("rpc.discover", req_id=1),
+            _rpc("PingService.ping", req_id=2),
+        ]
+        resp = client.post("/rpc", json=batch)
+        results = resp.json()
+        by_id = {r["id"]: r for r in results}
+        assert isinstance(by_id[1]["result"], list)
+        assert by_id[2]["result"] == "pong"
+
+
+# ──────────────────────────────────────────────────
+# Tests: rpc.describe
+# ──────────────────────────────────────────────────
+
+
+class TestRpcDescribe:
+    def test_returns_service_detail(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.describe", {"service": "UserService"}))
+        assert resp.status_code == 200
+        info = resp.json()["result"]
+        assert info["name"] == "UserService"
+        assert len(info["methods"]) == 3
+        method_names = {m["name"] for m in info["methods"]}
+        assert "list_users" in method_names
+        assert "create_user" in method_names
+        assert "types" in info
+
+    def test_unknown_service(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.describe", {"service": "Unknown"}))
+        assert resp.json()["error"]["code"] == -32601
+
+    def test_missing_service_param(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.describe", {}))
+        assert resp.json()["error"]["code"] == -32602
+
+
+# ──────────────────────────────────────────────────
+# Tests: rpc.schema
+# ──────────────────────────────────────────────────
+
+
+class TestRpcSchema:
+    def test_returns_methods_and_defs(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.schema"))
+        assert resp.status_code == 200
+        body = resp.json()["result"]
+        assert "methods" in body
+        assert "$defs" in body
+
+    def test_defs_contains_dto_types(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.schema"))
+        defs = resp.json()["result"]["$defs"]
+        assert "UserDTO" in defs
+        user_def = defs["UserDTO"]
+        assert user_def["type"] == "object"
+        assert "id" in user_def["properties"]
+        assert "name" in user_def["properties"]
+
+    def test_params_basic_types(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.schema"))
+        methods = resp.json()["result"]["methods"]
+        get_user = methods["UserService.get_user"]
+        assert get_user["params"]["user_id"]["type"] == "integer"
+        assert get_user["kind"] == "query"
+
+    def test_result_ref_defs(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.schema"))
+        methods = resp.json()["result"]["methods"]
+        list_users = methods["UserService.list_users"]
+        result = list_users["result"]
+        assert result["type"] == "array"
+        assert "$ref" in result["items"]
+
+    def test_mutation_filtered(self, no_mutation_client):
+        resp = no_mutation_client.post("/rpc", json=_rpc("rpc.schema"))
+        methods = resp.json()["result"]["methods"]
+        assert "UserService.create_user" not in methods
+        assert "UserService.list_users" in methods
+
+
+# ──────────────────────────────────────────────────
+# Tests: rpc.* error handling
+# ──────────────────────────────────────────────────
+
+
+class TestRpcErrors:
+    def test_unknown_rpc_method(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.unknown"))
+        assert resp.json()["error"]["code"] == -32601
+
+    def test_rpc_discover_ignores_extra_params(self, client):
+        resp = client.post("/rpc", json=_rpc("rpc.discover", {"extra": "ignored"}))
+        assert resp.status_code == 200
+        assert isinstance(resp.json()["result"], list)
