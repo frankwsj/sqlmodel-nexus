@@ -1,10 +1,18 @@
 name: Test
 
 on:
-  push:
+  pull_request:
     paths:
       - 'src/nexusx/**'
       - 'tests/**'
+      - 'skill/**'
+      - 'pyproject.toml'
+  push:
+    branches: [master]
+    paths:
+      - 'src/nexusx/**'
+      - 'tests/**'
+      - 'skill/**'
       - 'pyproject.toml'
 
 jobs:
@@ -35,3 +43,33 @@ jobs:
 
       - name: Test with pytest
         run: uv run pytest tests/ -v
+
+  # Guards the skill's reference template against framework API drift.
+  # The template is the skill's first real consumer; if a framework API is
+  # renamed/removed, this job fails on the PR instead of silently shipping a
+  # broken skill that users discover only after generating a project.
+  # Critical: uv sync installs the WORKING-COPY framework (editable), so the
+  # template is verified against the code in this PR — not the PyPI release.
+  template-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install working-copy framework + extras
+        run: uv sync --all-extras
+
+      - name: Compile all template sources
+        run: uv run python -m compileall -q skill/template/src
+
+      - name: Import template app against working-copy framework
+        run: uv run python -c "import sys; sys.path.insert(0, 'skill/template'); import src.main"
