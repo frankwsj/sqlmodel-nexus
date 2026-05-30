@@ -73,3 +73,21 @@ jobs:
 
       - name: Import template app against working-copy framework
         run: uv run python -c "import sys; sys.path.insert(0, 'skill/template'); import src.main"
+
+  # Single required-status gate. Branch protection should require this ONE
+  # check ("CI All Green") instead of each job (the matrix makes per-job names
+  # awkward). It aggregates the real jobs and fails if any did not succeed.
+  # A mirror job of the same name lives in ci-skip.yml: when a PR touches no
+  # code paths this workflow is skipped entirely, so the mirror reports the
+  # same check as green and docs-only PRs are never blocked on a check that
+  # path filtering skipped.
+  ci-all-green:
+    name: CI All Green
+    if: always()
+    needs: [test, template-guard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          echo "test=${{ needs.test.result }} template-guard=${{ needs.template-guard.result }}"
+          [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.template-guard.result }}" = "success" ]
