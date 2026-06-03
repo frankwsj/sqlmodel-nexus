@@ -452,3 +452,173 @@ class TestRpcErrors:
         resp = client.post("/rpc", json=_rpc("rpc.discover", {"extra": "ignored"}))
         assert resp.status_code == 200
         assert isinstance(resp.json()["result"], list)
+
+
+# ──────────────────────────────────────────────────
+# Tests: Remote HTTP calls (real uvicorn + httpx)
+# ──────────────────────────────────────────────────
+
+import threading
+import time
+
+import httpx
+import uvicorn
+
+
+@pytest.fixture(scope="module")
+def remote_server():
+    """Start a real HTTP server in a background thread."""
+    _app = FastAPI()
+    _router = create_jsonrpc_router(
+        UseCaseAppConfig(
+            name="test",
+            services=[UserService, PingService, ContextService],
+            context_extractor=_extract_user,
+        ),
+    )
+    _app.include_router(_router)
+
+    port = 18765
+    thread = threading.Thread(
+        target=uvicorn.run,
+        kwargs={"app": _app, "host": "127.0.0.1", "port": port, "log_level": "error"},
+        daemon=True,
+    )
+    thread.start()
+    time.sleep(1.0)
+    yield f"http://127.0.0.1:{port}"
+
+
+class TestRemoteBasic:
+    """Verify JSON-RPC over a real HTTP connection."""
+
+    def test_remote_ping(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("PingService.ping"),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["result"] == "pong"
+
+    def test_remote_list_users(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UserService.list_users"),
+        )
+        assert resp.status_code == 200
+        users = resp.json()["result"]
+        assert len(users) == 2
+        assert users[0]["name"] == "Alice"
+
+    def test_remote_get_user_found(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UserService.get_user", {"user_id": 1}),
+        )
+        assert resp.json()["result"]["id"] == 1
+
+    def test_remote_get_user_not_found(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UserService.get_user", {"user_id": 999}),
+        )
+        assert resp.json()["result"] is None
+
+    def test_remote_mutation(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UserService.create_user", {"name": "Zoe", "email": "z@t.com"}),
+        )
+        assert resp.json()["result"]["name"] == "Zoe"
+
+
+class TestRemoteErrors:
+    def test_remote_method_not_found(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UnknownService.method"),
+        )
+        assert resp.json()["error"]["code"] == -32601
+
+    def test_remote_invalid_params(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("UserService.get_user", {}),
+        )
+        assert resp.json()["error"]["code"] == -32602
+
+    def test_remote_invalid_json_body(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            content=b"not json",
+            headers={"Content-Type": "application/json"},
+        )
+        body = resp.json()
+        assert body.get("error", {}).get("code") == -32700
+
+
+class TestRemoteBatch:
+    def test_remote_batch_mixed(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=[
+                _rpc("UserService.list_users", req_id=1),
+                _rpc("PingService.ping", req_id=2),
+                _rpc("UnknownService.method", req_id=3),
+            ],
+        )
+        results = resp.json()
+        assert len(results) == 3
+        by_id = {r["id"]: r for r in results}
+        assert "result" in by_id[1]
+        assert by_id[2]["result"] == "pong"
+        assert by_id[3]["error"]["code"] == -32601
+
+
+class TestRemoteContext:
+    def test_remote_from_context(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("ContextService.whoami"),
+            headers={"X-User-Id": "42"},
+        )
+        assert resp.json()["result"]["id"] == 42
+
+    def test_remote_context_with_param(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("ContextService.greet", {"message": "hi"}),
+            headers={"X-User-Id": "7"},
+        )
+        assert resp.json()["result"] == "user=7,msg=hi"
+
+
+class TestRemoteIntrospection:
+    def test_remote_rpc_discover(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("rpc.discover"),
+        )
+        services = resp.json()["result"]
+        names = {s["name"] for s in services}
+        assert "UserService" in names
+
+    def test_remote_rpc_describe(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("rpc.describe", {"service": "UserService"}),
+        )
+        info = resp.json()["result"]
+        assert info["name"] == "UserService"
+        assert len(info["methods"]) >= 2
+
+    def test_remote_rpc_schema(self, remote_server):
+        resp = httpx.post(
+            f"{remote_server}/rpc",
+            json=_rpc("rpc.schema"),
+        )
+        body = resp.json()["result"]
+        assert "methods" in body
+        assert "$defs" in body
