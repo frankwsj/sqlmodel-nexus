@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Annotated
 
+import httpx
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -458,11 +462,7 @@ class TestRpcErrors:
 # Tests: Remote HTTP calls (real uvicorn + httpx)
 # ──────────────────────────────────────────────────
 
-import threading
-import time
 
-import httpx
-import uvicorn
 
 
 @pytest.fixture(scope="module")
