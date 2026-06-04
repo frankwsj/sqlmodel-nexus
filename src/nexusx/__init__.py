@@ -73,6 +73,7 @@ from nexusx.use_case import (
     UseCaseAppConfig,
     UseCaseService,
     create_flat_mcp_server,
+    create_jsonrpc_router,
     create_use_case_mcp_server,
 )
 from nexusx.use_case import (
@@ -123,6 +124,7 @@ __all__ = [
     "create_use_case_mcp_server",
     "create_flat_mcp_server",
     "create_cli",
+    "create_jsonrpc_router",
     "create_use_case_router",
     # Voyager visualization
     "create_use_case_voyager",
