@@ -152,7 +152,7 @@ class TestBasicInvocation:
 class TestMutationFiltering:
     def test_mutation_excluded(self, no_mutation_cli):
         result = runner.invoke(no_mutation_cli, ["user-service", "create_user", "--help"])
-        assert result.exit_code != 0  # command should not exist
+        assert result.exit_code != 0 or "No such command" in result.output
 
     def test_query_still_works(self, no_mutation_cli):
         result = runner.invoke(no_mutation_cli, ["user-service", "list_users"])

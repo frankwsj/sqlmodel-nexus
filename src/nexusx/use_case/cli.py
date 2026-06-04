@@ -22,7 +22,7 @@ import asyncio
 import inspect
 import json
 import re
-from typing import Any, get_type_hints
+from typing import Any, get_args, get_origin, get_type_hints
 
 try:
     import typer
@@ -43,7 +43,6 @@ def _camel_to_snake(name: str) -> str:
 
 def _unwrap_from_context(annotation: Any) -> Any:
     """Extract the inner type from Annotated[T, FromContext()]."""
-    from typing import get_args, get_origin
 
     origin = get_origin(annotation)
     if origin is not None:
@@ -81,6 +80,7 @@ def _build_command(
         param_infos.append((name, anno, default))
 
     def _command(**kwargs: Any) -> None:
+        # asyncio.run creates a new loop — cannot be called inside an existing loop
         result = asyncio.run(method(**kwargs))
         print(json.dumps(_serialize_result(result), indent=2, ensure_ascii=False))
 
@@ -103,7 +103,7 @@ def _build_command(
 
 
 def create_cli(
-    config: Any,
+    config: UseCaseAppConfig,
     app_name: str | None = None,
 ) -> typer.Typer:
     """Create a Typer CLI app from UseCaseAppConfig.
