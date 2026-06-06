@@ -6,35 +6,16 @@ Define once, serve everywhere — GraphQL for validation, REST for production, M
 [![PyPI Downloads](https://static.pepy.tech/badge/nexusx/month)](https://pepy.tech/projects/nexusx)
 ![Python Versions](https://img.shields.io/pypi/pyversion/nexusx)
 
-nexusx turns your SQLModel entities into a complete API surface without rewriting the stack at each stage. Start with a quick GraphQL POC to validate your data model, ship typed REST endpoints for your frontend, and expose the same capabilities to AI agents through MCP — all from a single set of entity definitions.
+nexusx turns your SQLModel entities into a complete API surface. Define entities and relationships once, then generate GraphQL, REST, and MCP endpoints from that single source.
 
-```mermaid
-flowchart LR
-    idea["Idea<br/>Entities + relationships"] --> model["SQLModel<br/>Single source of truth"]
-    model --> poc["POC<br/>GraphQL + Voyager<br/>Validate model fast"]
-    model --> product["Product<br/>REST + OpenAPI<br/>Typed frontend delivery"]
-    model --> ai["AI-Friendly<br/>MCP tools<br/>Agent integration"]
-```
+## Key Features
 
-## The Problem
-
-Frameworks force you to choose: GraphQL-first tools (Strawberry, Ariadne) give you schema generation but leave you on your own for REST endpoints. REST-first tools (FastAPI) give you OpenAPI but no GraphQL or MCP. MCP frameworks add yet another layer of duplication.
-
-The result: three code paths that define the same entities, the same relationships, the same data shapes — in three slightly different ways. When the model changes, you fix it in three places. When a new hire joins, they learn three APIs.
-
-**nexusx gives you one model and three delivery paths.** Define your entities and relationships once in SQLModel, and the framework generates all three from that single source.
-
-## How It Compares
-
-| Tool | GraphQL auto-gen | REST + OpenAPI | MCP | N+1 prevention | Relationship auto-loading |
-|------|:---:|:---:|:---:|:---:|:---:|
-| **nexusx** | ✅ | ✅ | ✅ | ✅ DataLoader | ✅ implicit |
-| Strawberry | ✅ | ❌ | ❌ | ⚠️ manual | ⚠️ manual loader |
-| FastAPI + SQLModel | ❌ | ✅ (manual) | ❌ | ❌ | ❌ |
-| Ariadne | ✅ | ❌ | ❌ | ⚠️ manual | ❌ |
-| FastMCP | ❌ | ❌ | ✅ | ❌ | ❌ |
-
-nexusx is the only framework that takes you from model definition to GraphQL, REST, and MCP without duplicating logic.
+- **Auto-generated GraphQL** — `@query`/`@mutation` decorators on SQLModel classes produce a full schema with DataLoader relationship resolution (one query per level, no N+1)
+- **Typed REST via DefineSubset** — Pick fields, hide FKs, declare relationship fields — they auto-load by name through the same DataLoader engine
+- **MCP for AI agents** — Four-layer progressive disclosure (apps → services → methods → execution) lets AI agents discover and call your business logic
+- **One service, two channels** — `UseCaseService` subclasses serve both MCP tools and FastAPI routes from the same class
+- **Cross-layer data flow** — `ExposeAs` (ancestor → descendant), `SendTo` + `Collector` (descendant → ancestor) for tree-level coordination
+- **Visual ER diagrams** — Mermaid output for docs, Voyager for interactive exploration
 
 ## Install
 
@@ -47,37 +28,11 @@ Requires Python ≥ 3.10.
 
 ## Quick Start
 
-```bash
-git clone https://github.com/allmonday/nexusx.git
-cd nexusx
-bash start_all.sh
-```
-
-This launches the full demo suite:
-
-| Service | Port | What it shows |
-|---------|------|---------------|
-| GraphQL playground | 8000 | Auto-generated Schema + DataLoader relationship resolution |
-| Core API (REST) | 8001 | DefineSubset DTOs with resolve_*/post_*/cross-layer flow |
-| Auth GraphQL | 8002 | Multi-entity auth model with queries + mutations |
-| Auth MCP | 8003 | Same auth model exposed as MCP tools |
-| Multi-app MCP | 8004 | Two apps sharing one MCP server |
-| Paginated GraphQL | 8005 | Relationship pagination (limit/offset) |
-| UseCase MCP | 8006 | 4-layer progressive disclosure MCP |
-| UseCase FastAPI | 8007 | Same UseCaseService served as OpenAPI-documented REST |
-| Voyager | 8008 | Visual entity-relationship map |
-
-## Three Modes, One Model
-
-nexusx offers three modes, each serving a different stage of the delivery pipeline. They share the same SQLModel entities and the same DataLoader infrastructure.
-
-### GraphQL Mode — Validate Fast
-
-The shortest path from entities to a running API. Add `@query` and `@mutation` decorators to your SQLModel classes, and the framework generates the full GraphQL schema.
+### Step 1: Define entities and relationships
 
 ```python
 from sqlmodel import SQLModel, Field, Relationship, select
-from nexusx import query, mutation, GraphQLHandler
+from nexusx import query, mutation
 
 class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
@@ -104,17 +59,30 @@ class Post(SQLModel, table=True):
             session.add(post)
             await session.commit()
             return post
+```
+
+### Step 2: Start GraphQL
+
+```python
+from nexusx import GraphQLHandler
 
 handler = GraphQLHandler(base=SQLModel, session_factory=async_session)
 ```
 
-Relationships resolve automatically via DataLoader — one query per relationship, regardless of result size. No `selectinload`, no manual joins.
+Query relationships — they resolve automatically via DataLoader, one query per level:
 
-**When to use:** early-stage validation, internal tools, rapid iteration. GraphQL's flexibility lets you test response shapes without writing DTOs.
+```graphql
+{
+  userGetUsers(limit: 5) {
+    name
+    posts { title }
+  }
+}
+```
 
-### Core API Mode — Ship Typed REST
+### Step 3: Add typed REST endpoints
 
-When you're ready for production frontend delivery, DefineSubset DTOs give you typed, N+1-safe REST endpoints using the same DataLoader engine.
+When you're ready for production, add `DefineSubset` DTOs on the same entities:
 
 ```python
 from nexusx import DefineSubset, ErManager
@@ -122,79 +90,63 @@ from nexusx import DefineSubset, ErManager
 class UserDTO(DefineSubset):
     __subset__ = (User, ("id", "name"))
 
-class TaskDTO(DefineSubset):
-    __subset__ = (Task, ("id", "title", "owner_id"))
-    owner: UserDTO | None = None   # auto-loaded — name matches Task.owner
-
-class SprintDTO(DefineSubset):
-    __subset__ = (Sprint, ("id", "name"))
-    tasks: list[TaskDTO] = []      # auto-loaded — name matches Sprint.tasks
-    task_count: int = 0
-
-    def post_task_count(self):
-        return len(self.tasks)     # derived after children are loaded
+class PostDTO(DefineSubset):
+    __subset__ = (Post, ("id", "title", "author_id"))
+    author: UserDTO | None = None   # auto-loaded — name matches Post.author
 
 er = ErManager(base=SQLModel, session_factory=async_session)
 Resolver = er.create_resolver()
 
 # Per request
-dtos = await Resolver().resolve(sprints)
+dtos = await Resolver().resolve(posts)
 ```
 
-Key concepts, in the order you'll encounter them:
+Relationship fields auto-load when the field name matches a registered relationship. Add `post_*` methods for derived fields, `resolve_*` for custom loading logic.
 
-| Step | What | Why |
-|------|------|-----|
-| 1. Implicit auto-loading | Relationship fields with matching names load via DataLoader | Zero boilerplate for standard relationships |
-| 2. `resolve_*` methods | Custom loading logic via `Loader(DataLoaderClass)` | Unusual joins, non-ORM data sources |
-| 3. `post_*` methods | Derived fields computed after the subtree is ready | Counts, aggregations, formatting |
-| 4. Cross-layer data flow | `ExposeAs` (downward) + `SendTo`/`Collector` (upward) | Ancestor context, bottom-up aggregation |
+### Step 4: Expose to AI agents
 
-**When to use:** production REST endpoints, typed frontend contracts, OpenAPI documentation.
-
-### UseCase Services — One Service, Two Channels
-
-Package your business logic as `UseCaseService` subclasses. The same class serves both MCP tools (for AI agents) and FastAPI routes (for web apps).
+Package business logic as `UseCaseService` — same class serves both MCP and REST:
 
 ```python
-from nexusx import UseCaseService, query, UseCaseAppConfig, create_use_case_mcp_server
+from nexusx import UseCaseService, UseCaseAppConfig, create_use_case_mcp_server, create_use_case_router
 
 class SprintService(UseCaseService):
-    """Sprint management."""
-
     @query
     async def list_sprints(cls) -> list[SprintSummary]:
         """Get all sprints with task counts."""
-        async with async_session() as session:
-            rows = (await session.exec(select(Sprint))).all()
-        return await Resolver().resolve([SprintSummary(**r.model_dump()) for r in rows])
+        ...
 
-# Expose to AI agents via MCP
+# MCP (AI agents)
 mcp = create_use_case_mcp_server(
     apps=[UseCaseAppConfig(name="project", services=[SprintService])],
 )
 mcp.run()
 
-# Or expose as REST (in a different file)
-from nexusx import create_use_case_router
-router = create_use_case_router(
+# REST (FastAPI)
+app.include_router(create_use_case_router(
     UseCaseAppConfig(name="project", services=[SprintService])
-)
-app.include_router(router)
+))
 ```
 
-One service class, two serving modes — no duplication.
+### Recap
 
-**MCP progressive disclosure:** Four-layer tool hierarchy. Agents discover apps → list services → inspect method signatures → execute calls. Each layer provides just enough context to reach the next.
+From a single set of entity definitions, you get:
 
-| Tool | Purpose |
-|------|---------|
-| `list_apps()` | Discover available apps |
-| `list_services(app_name)` | List services in an app |
-| `describe_service(app_name, service_name)` | Method signatures + DTO type definitions |
-| `call_use_case(app_name, service_name, method_name, params)` | Execute a method |
+- **GraphQL** — auto-generated schema with DataLoader relationship resolution
+- **REST** — typed DTOs with implicit auto-loading, OpenAPI docs at `/docs`
+- **MCP** — four-layer progressive disclosure for AI agents
 
-**When to use:** production-grade business logic that needs to serve both human users (REST) and AI agents (MCP).
+All three share the same SQLModel entities and the same DataLoader infrastructure.
+
+## How It Compares
+
+| Tool | GraphQL auto-gen | REST + OpenAPI | MCP | N+1 prevention | Relationship auto-loading |
+|------|:---:|:---:|:---:|:---:|:---:|
+| **nexusx** | yes | yes | yes | yes (DataLoader) | yes (implicit) |
+| Strawberry | yes | no | no | manual | manual loader |
+| FastAPI + SQLModel | no | yes (manual) | no | no | no |
+| Ariadne | yes | no | no | manual | no |
+| FastMCP | no | no | yes | no | no |
 
 ## Choosing a Mode
 
@@ -205,40 +157,7 @@ One service class, two serving modes — no duplication.
 | Expose business capabilities to AI agents | UseCase Services |
 | Do all three from one model | UseCase Services → embed DTOs inside methods |
 
-They compose: a UseCaseService method can internally use `Resolver().resolve(dtos)` for Core API data assembly. The modes are not mutually exclusive — they share the same DataLoader engine and the same SQLModel entities.
-
-## AI Agent Skill
-
-The project includes a [4-phase skill](./skill/) that guides AI coding agents (Claude Code, Codex) through the entire nexusx workflow:
-
-| Phase | Focus | Output |
-|---|---|---|
-| 0 | Clarify the idea | Entities, relationships, use cases |
-| 1 | Build the POC model | Entities + database + Voyager visualization |
-| 2 | Make it queryable | `@query`/`@mutation` methods, GraphQL playground |
-| 3 | Productize + AI-ready | DTOs + REST endpoints + MCP server |
-
-**Claude Code:**
-
-```bash
-ln -s $(pwd)/skill ~/.claude/skills/nexusx-4phase
-```
-
-Then type `/nexusx-4phase` or describe your requirements.
-
-**OpenAI Codex (repo-scope — recommended):**
-
-```bash
-mkdir -p .agents/skills && ln -s ../../skill .agents/skills/nexusx-4phase
-```
-
-**OpenAI Codex (user-scope):**
-
-```bash
-mkdir -p ~/.agents/skills && ln -s $(pwd)/skill ~/.agents/skills/nexusx-4phase
-```
-
-Start Codex and type `$nexusx-4phase`.
+The modes compose: a UseCaseService method can internally use `Resolver().resolve(dtos)` for Core API data assembly. They share the same DataLoader engine and the same entities.
 
 ## What the Framework Handles
 
@@ -250,33 +169,33 @@ Start Codex and type `$nexusx-4phase`.
 | Write `post_*` methods for derived fields | Execute them after the subtree is fully resolved |
 | Declare `ExposeAs`/`SendTo`/`Collector` | Route cross-layer data flow automatically |
 | Define `UseCaseService` subclasses | Discover methods, generate MCP tools + FastAPI routes |
-| Declare `Loader(DataLoaderClass)` deps | Batch-load keys across sibling nodes (BFS-level parallelism) |
 
 ## Demos
 
-After `bash start_all.sh`, explore:
-
 ```bash
-# GraphQL playground
-open http://localhost:8000/graphql
-
-# REST + OpenAPI docs
-open http://localhost:8001/docs
-
-# UseCase FastAPI docs — same services, REST surface
-open http://localhost:8007/docs
-
-# Entity-relationship visualization
-open http://localhost:8008/voyager
+git clone https://github.com/allmonday/nexusx.git
+cd nexusx
+bash start_all.sh
 ```
 
-Individual services:
+| Service | Port | What it shows |
+|---------|------|---------------|
+| GraphQL playground | 8000 | Auto-generated Schema + DataLoader relationship resolution |
+| Core API (REST) | 8001 | DefineSubset DTOs with resolve_*/post_*/cross-layer flow |
+| Auth GraphQL | 8002 | Multi-entity auth model with queries + mutations |
+| Auth MCP | 8003 | Same auth model exposed as MCP tools |
+| Multi-app MCP | 8004 | Two apps sharing one MCP server |
+| Paginated GraphQL | 8005 | Relationship pagination (limit/offset) |
+| UseCase MCP | 8006 | 4-layer progressive disclosure MCP |
+| UseCase FastAPI | 8007 | Same UseCaseService served as OpenAPI-documented REST |
+| Voyager | 8008 | Visual entity-relationship map |
+
+## AI Agent Skill
+
+A [4-phase skill](./skill/) guides AI coding agents through the full nexusx workflow: clarify requirements → build POC model → add queries → productize.
 
 ```bash
-uv run python -m demo.blog.app                    # GraphQL on :8000
-uv run uvicorn demo.core_api.app:app --port 8001   # Core API on :8001
-uv run --with fastmcp python -m demo.blog.mcp_server  # GraphQL MCP (stdio)
-uv run --with fastmcp python -m demo.use_case.mcp_server  # UseCase MCP (stdio)
+ln -s $(pwd)/skill ~/.claude/skills/nexusx-4phase
 ```
 
 ## Development
@@ -288,13 +207,10 @@ uv run ruff check src/ tests/  # Lint only
 uv run mypy src/            # Type-check only
 ```
 
-Tests use `pytest-asyncio` with `asyncio_mode=auto`. Lint uses `ruff` with line-length 100. Type checking uses `mypy --strict`.
-
 ## Documentation
 
 - [API docs](docs/) — per-mode guides for GraphQL, Core API, and UseCase
 - [Clean Architecture comparison](docs/clean-architecture-comparison.md) — nexusx vs Django/DRF, Strawberry, Litestar, and more
-- [CLAUDE.md](./CLAUDE.md) — development conventions and public API reference
 
 ## License
 
