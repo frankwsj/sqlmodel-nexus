@@ -4,7 +4,7 @@ Relationship 和 ErDiagram 的完整 API 参考。
 
 ## Relationship
 
-自定义（非 ORM）关系声明。
+使用 `Relationship` 声明自定义（非 ORM）关系。
 
 ```python
 from nexusx import Relationship
@@ -35,6 +35,9 @@ class Task(SQLModel, table=True):
 
 ### target 语法
 
+!!! tip
+    使用 `target=Entity` 表示 MANYTOONE 关系（单个目标），使用 `target=list[Entity]` 表示 ONETOMANY 关系（列表目标）。
+
 ```python
 # 单个目标（MANYTOONE）
 Relationship(fk="owner_id", target=User, name="owner", loader=user_loader)
@@ -43,9 +46,12 @@ Relationship(fk="owner_id", target=User, name="owner", loader=user_loader)
 Relationship(fk="id", target=list[Tag], name="tags", loader=tags_loader)
 ```
 
+!!! tip
+    确保关系名称与字段名称匹配，以便启用隐式自动加载。如果字段名为 `owner`，关系名称也应为 `owner`。
+
 ## ErDiagram
 
-Mermaid ER 图生成。
+使用 `ErDiagram` 生成 Mermaid ER 图。
 
 ```python
 from nexusx import ErDiagram

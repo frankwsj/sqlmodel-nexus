@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
 from sqlmodel import SQLModel
 
 from nexusx.subset import DefineSubset

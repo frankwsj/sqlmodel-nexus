@@ -1,6 +1,6 @@
 # UseCase + FastAPI
 
-同一 UseCaseService 类在 FastAPI 中的使用——路由是薄包装器，业务逻辑留在服务中。
+在 FastAPI 中使用同一个 `UseCaseService` 类。路由是薄包装器——业务逻辑留在服务中。
 
 ## 路由定义
 
@@ -20,6 +20,11 @@ async def get_sprint(sprint_id: int):
         raise HTTPException(status_code=404, detail="Sprint not found")
     return result
 ```
+
+注意路由有多薄——它们只处理参数传递和 HTTP 特有的关注点（比如 404 响应）。所有业务逻辑都在服务类中。
+
+!!! tip
+    这就是**薄路由模式**：路由委托给 `UseCaseService` 方法。如果需要改业务逻辑，你只需要改服务——路由不变。
 
 ## OpenAPI 分组
 
@@ -42,7 +47,7 @@ UseCaseService 子类 ──┬── MCP server（AI 代理）
 - **业务逻辑单一定义**：修改只需改一处
 - **路由薄包装**：FastAPI 路由只做参数传递和异常处理
 - **类型安全**：相同的 DTO 类型在两种模式中复用
-- **OpenAPI 自动生成**：FastAPI 自动生成 openapi.json，可用于 TypeScript SDK 生成
+- **OpenAPI 自动生成**：FastAPI 自动生成 `openapi.json`，可用于 TypeScript SDK 生成
 
 ## 完整示例
 
@@ -60,7 +65,7 @@ class SprintService(UseCaseService):
     async def get_sprint(cls, sprint_id: int) -> SprintSummary | None:
         ...
 
-# MCP 模式
+# MCP 模式（AI 代理）
 mcp = create_use_case_mcp_server(
     apps=[
         UseCaseAppConfig(name="project", services=[SprintService]),
@@ -68,7 +73,7 @@ mcp = create_use_case_mcp_server(
     name="Sprint API",
 )
 
-# FastAPI 模式
+# FastAPI 模式（REST API）
 app = FastAPI()
 
 @app.get("/api/sprints", tags=[SprintService.get_tag_name()])
@@ -82,6 +87,13 @@ async def get_sprint(sprint_id: int):
         raise HTTPException(status_code=404, detail="Sprint not found")
     return result
 ```
+
+## 回顾
+
+- 路由是薄包装器，委托给 `UseCaseService` 方法
+- `get_tag_name()` 提供 OpenAPI 兼容的标签分组
+- 同一个服务类同时服务于 MCP 和 FastAPI，无需重复
+- 业务逻辑的修改只需要在一个地方进行
 
 ## 下一步
 

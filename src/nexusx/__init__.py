@@ -54,8 +54,6 @@ Example (Core API mode):
 
 from __future__ import annotations
 
-__version__ = "1.9.0"
-
 from nexusx.context import Collector, ExposeAs, SendTo
 from nexusx.decorator import mutation, query
 from nexusx.er_diagram import ErDiagram
@@ -75,6 +73,7 @@ from nexusx.use_case import (
     create_flat_mcp_server,
     create_jsonrpc_router,
     create_use_case_mcp_server,
+    get_return_type,
 )
 from nexusx.use_case import (
     create_router as create_use_case_router,
@@ -90,7 +89,6 @@ def __getattr__(name: str):
 
 __all__ = [
     # Version
-    "__version__",
     # Decorators
     "query",
     "mutation",
@@ -126,6 +124,7 @@ __all__ = [
     "create_cli",
     "create_jsonrpc_router",
     "create_use_case_router",
+    "get_return_type",
     # Voyager visualization
     "create_use_case_voyager",
 ]

@@ -13,7 +13,7 @@ from typing import Annotated, Any, get_args, get_origin, get_type_hints
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, create_model
 
-from nexusx.use_case.business import USE_CASE_METHODS_ATTR, UseCaseService
+from nexusx.use_case.business import USE_CASE_METHODS_ATTR, UseCaseService, get_return_type
 from nexusx.use_case.context import FromContext
 from nexusx.use_case.types import UseCaseAppConfig
 
@@ -114,12 +114,6 @@ def _get_from_context_params(method: Any) -> set[str]:
                     params.add(name)
                     break
     return params
-
-
-def _get_return_type(func: Any, hints: dict[str, Any]) -> Any:
-    """Extract the return type annotation from a method."""
-    ret = hints.get("return", inspect.Parameter.empty)
-    return ret if ret is not inspect.Parameter.empty else None
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +300,7 @@ def create_router(
             handler.__doc__ = description or method_name
 
             # Determine return type
-            return_type = _get_return_type(method, hints)
+            return_type = get_return_type(method)
 
             # Build path
             path = f"{prefix}/{service_url}/{method_name}"

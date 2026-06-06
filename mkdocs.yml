@@ -13,14 +13,14 @@ theme:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: custom
-      accent: teal
+      accent: light blue
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: custom
-      accent: teal
+      accent: light blue
       toggle:
         icon: material/brightness-4
         name: Switch to system preference
@@ -81,6 +81,8 @@ nav:
     - Migration Guide: ./reference/migration.md
 
 markdown_extensions:
+  - admonition
+  - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences:
@@ -98,11 +100,11 @@ plugins:
           default: true
           name: English
           build: true
-          link: "/nexusx/"
+          link: "/"
         - locale: zh
           name: 中文
           build: true
-          link: "/nexusx/zh/"
+          link: "/zh/"
           nav_translations:
             Guide: "指南"
             Advanced: "进阶"

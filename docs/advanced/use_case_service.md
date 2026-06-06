@@ -1,17 +1,17 @@
 # UseCase Service
 
-UseCaseService lets you define business logic as service classes that serve both MCP and web frameworks — one definition, two presentations.
-
-## Design Philosophy
+Define business logic once as a service class — serve it to both MCP (AI agents) and FastAPI (REST API) without duplication.
 
 ```
 UseCaseService subclass ──┬── MCP server (AI agents, four-layer progressive discovery)
-                         └── FastAPI routes (REST API, OpenAPI docs)
+                         └── FastAPI routes (auto-generated POST endpoints)
 ```
 
-## Defining a UseCaseService
+One service class. Two presentation modes. No duplication.
 
-`UseCaseService` subclasses declare `async classmethod` methods. The metaclass auto-discovers public methods:
+## Step 1: Define a UseCaseService
+
+Subclass `UseCaseService` and declare `async classmethod` methods. The metaclass auto-discovers all public methods:
 
 ```python
 from nexusx.use_case import UseCaseService
@@ -40,9 +40,12 @@ class SprintService(UseCaseService):
         return await Resolver().resolve(dto)
 ```
 
-## Exposing to MCP
+!!! tip
+    Method docstrings become MCP tool descriptions — write them clearly so AI agents know when to use each method. Private methods (starting with `_`) are excluded from discovery.
 
-Four-layer progressive discovery: app discovery → service list → method details → execution.
+## Step 2: Expose to MCP
+
+Wrap your services in an MCP server with four-layer progressive discovery:
 
 ```python
 from nexusx.use_case import UseCaseAppConfig, create_use_case_mcp_server
@@ -60,16 +63,18 @@ mcp = create_use_case_mcp_server(
 mcp.run()  # stdio mode
 ```
 
-### MCP Tools
+### How the four layers work
 
-| Tool | Purpose |
-|------|---------|
-| `list_apps()` | Discover available apps |
-| `list_services(app_name)` | List services and method counts in an app |
-| `describe_service(app_name, service_name)` | Method signatures (SDL format) + DTO type definitions |
-| `call_use_case(app_name, service_name, method_name, params)` | Execute method |
+AI agents explore your API progressively — they start broad, then drill into specifics:
 
-### describe_service Output
+| Tool | Layer | What the agent learns |
+|------|-------|----------------------|
+| `list_apps()` | App discovery | "What domains are available?" |
+| `list_services(app_name)` | Service listing | "What services does this app have?" |
+| `describe_service(app_name, service_name)` | Method details | Signatures + DTO type definitions |
+| `call_use_case(app_name, service_name, method_name, params)` | Execution | Run the method, get results |
+
+### describe_service output example
 
 ```json
 {
@@ -79,10 +84,94 @@ mcp.run()  # stdio mode
     {"name": "get_sprint", "signature_sdl": "get_sprint(sprint_id: Int!): SprintSummary"}
   ],
   "types": "type SprintSummary {\n  id: Int\n  name: String!\n  tasks: [TaskSummary!]!\n}"
-}
 ```
+
+The agent sees method signatures and full DTO type definitions before making a call — no guesswork.
+
+## Step 3: Generate FastAPI Routes
+
+The same service class also generates REST API routes via `create_use_case_router`:
+
+```python
+from fastapi import FastAPI
+from nexusx import UseCaseAppConfig, create_use_case_router
+
+config = UseCaseAppConfig(
+    name="project",
+    services=[SprintService, TaskService],
+    description="Project management",
+)
+
+app = FastAPI()
+app.include_router(create_use_case_router(config))
+```
+
+Each `@classmethod` in your services becomes a POST endpoint:
+
+```
+POST /api/sprint_service/list_sprints
+POST /api/sprint_service/get_sprint
+POST /api/task_service/list_tasks
+POST /api/task_service/get_task
+```
+
+URL pattern: `{prefix}/{service_name}/{method_name}`. Service names default to snake_case of the class name (`SprintService` → `sprint_service`).
+
+### How parameters map to routes
+
+Method parameters are split into two categories:
+
+| Parameter type | Example | Route handling |
+|----------------|---------|----------------|
+| **Body parameters** | `sprint_id: int` | Collected into a Pydantic request model |
+| **FromContext parameters** | `user_id: Annotated[int, FromContext()]` | Injected via `context_extractor` |
+
+```python
+from typing import Annotated
+from nexusx import FromContext
+
+class ReportService(UseCaseService):
+    @classmethod
+    async def my_tasks(cls, user_id: Annotated[int, FromContext()]) -> list[dict]:
+        """Get tasks for the current user."""
+        ...
+
+    @classmethod
+    async def create_report(
+        cls,
+        user_id: Annotated[int, FromContext()],
+        title: str,
+    ) -> dict:
+        """Create a report. user_id from context, title from body."""
+        ...
+```
+
+To inject context values from the FastAPI Request, pass a `context_extractor`:
+
+```python
+def extract_user(request):
+    user_id = request.headers.get("X-User-Id", "1")
+    return {"user_id": int(user_id)}
+
+context_config = UseCaseAppConfig(
+    name="reports",
+    services=[ReportService],
+    context_extractor=extract_user,
+)
+app.include_router(create_use_case_router(context_config))
+```
+
+OpenAPI documentation is generated automatically — visit `/docs` to see the interactive API docs.
+
+## Recap
+
+- `UseCaseService` subclasses define business logic as `async classmethod` methods
+- Method docstrings become MCP tool descriptions — write them clearly
+- `create_use_case_mcp_server` creates a four-layer progressive discovery MCP service
+- `create_use_case_router` generates FastAPI POST routes from the same service class
+- Body parameters become request body; `FromContext` parameters are injected via `context_extractor`
 
 ## Next Steps
 
-- [UseCase + FastAPI](./use_case_fastapi.md) — Embed the same service class into FastAPI
-- [MCP Service](./mcp_service.md) — Pure MCP integration (GraphQL mode)
+- [UseCase + FastAPI](./use_case_fastapi.md) — Manual thin-route pattern for finer control
+- [MCP Service](./mcp_service.md) — Pure MCP integration using GraphQL mode

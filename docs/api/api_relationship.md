@@ -1,10 +1,10 @@
 # Relationships & ER Diagram API
 
-Complete API reference for Relationship and ErDiagram.
+Define custom relationships and generate Mermaid ER diagrams with Relationship and ErDiagram.
 
 ## Relationship
 
-Custom (non-ORM) relationship declaration.
+Declare custom (non-ORM) relationships between entities.
 
 ```python
 from nexusx import Relationship
@@ -31,9 +31,11 @@ class Task(SQLModel, table=True):
 
 ### Declaration Location
 
-Declare in the `__relationships__` class attribute of a SQLModel entity class, as a list of `Relationship` instances.
+Declare relationships in the `__relationships__` class attribute of a SQLModel entity class, as a list of `Relationship` instances.
 
 ### target Syntax
+
+Choose the appropriate target syntax based on your relationship cardinality:
 
 ```python
 # Single target (MANYTOONE)
@@ -43,9 +45,15 @@ Relationship(fk="owner_id", target=User, name="owner", loader=user_loader)
 Relationship(fk="id", target=list[Tag], name="tags", loader=tags_loader)
 ```
 
+!!! tip
+    Use `target=Entity` for many-to-one relationships (like "a task has one owner") and `target=list[Entity]` for one-to-many relationships (like "a sprint has many tasks"). This syntax matches the expected return type of your DataLoader.
+
+!!! tip
+    The `name` parameter enables implicit auto-loading — when you declare a field with the same name as a relationship, Resolver automatically loads it without requiring a `resolve_*` method. Keep your relationship names consistent with your DTO field names for clean, declarative code.
+
 ## ErDiagram
 
-Mermaid ER diagram generation.
+Generate Mermaid ER diagrams from your entity relationships.
 
 ```python
 from nexusx import ErDiagram
@@ -70,6 +78,8 @@ erDiagram
 ```
 
 ### From ErManager
+
+Extract the diagram from an existing ErManager:
 
 ```python
 er = ErManager(base=SQLModel, session_factory=async_session)

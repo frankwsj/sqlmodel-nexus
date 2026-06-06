@@ -1,10 +1,10 @@
 # Core API Reference
 
-Complete API reference for ErManager, Resolver, DefineSubset, and Loader.
+Manage entities, register relationships, and resolve DTO trees with ErManager, Resolver, DefineSubset, and Loader.
 
 ## ErManager
 
-Entity relationship manager — discovers entities, registers relationships, and creates Resolvers.
+Create an entity relationship manager to discover entities, register relationships, and create Resolvers.
 
 ```python
 from nexusx import ErManager
@@ -16,7 +16,8 @@ er = ErManager(
 )
 ```
 
-**Note**: `base` and `entities` are mutually exclusive — you cannot pass both.
+!!! warning
+    The `base` and `entities` parameters are mutually exclusive — you cannot pass both. Choose one approach: either provide a base class for auto-discovery or explicitly list your entities.
 
 ### Methods
 
@@ -27,7 +28,7 @@ er = ErManager(
 
 ## Resolver
 
-A class returned by `ErManager.create_resolver()`. Used to resolve DTO trees.
+Resolve DTO trees by traversing relationships and executing resolver methods.
 
 ```python
 Resolver = er.create_resolver()
@@ -35,7 +36,7 @@ Resolver = er.create_resolver()
 result = await Resolver().resolve(dtos)
 ```
 
-### Resolver Constructor Parameters
+### Constructor Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -43,7 +44,9 @@ result = await Resolver().resolve(dtos)
 | `loader_params` | `dict` | DataLoader extra parameters |
 | `debug` | `bool` | Enable debug logging |
 
-### Resolver.resolve
+### resolve Method
+
+Execute the resolution process on a DTO or list of DTOs.
 
 ```python
 result = await Resolver().resolve(dtos)
@@ -53,6 +56,8 @@ The `dtos` parameter can be a single DTO instance or a list of DTOs. Returns the
 
 ### Execution Order
 
+The Resolver executes methods in a specific order:
+
 1. Execute all `resolve_*` methods (load relationship data)
 2. Traverse existing object fields
 3. Execute all `post_*` methods (compute derived fields)
@@ -60,7 +65,7 @@ The `dtos` parameter can be a single DTO instance or a list of DTOs. Returns the
 
 ## DefineSubset
 
-DTO base class — generates Pydantic models from SQLModel entities.
+Create DTO base classes that generate Pydantic models from SQLModel entities.
 
 ```python
 from nexusx import DefineSubset
@@ -69,19 +74,25 @@ class UserDTO(DefineSubset):
     __subset__ = (User, ("id", "name"))
 ```
 
+!!! tip
+    Think of `DefineSubset` as a lens that focuses on specific fields of an entity. You declare which fields to include, and the framework generates a clean Pydantic model with those fields — automatically hiding FK fields while keeping them accessible for relationship loading.
+
 ### __subset__ Syntax
 
-Accepts a tuple `(Entity, ('field1', 'field2'))` or a `SubsetConfig` object.
+Accepts either a tuple `(Entity, ('field1', 'field2'))` or a `SubsetConfig` object.
 
 ### Rules
 
-- FK fields are automatically hidden from serialization output (`exclude=True`), but remain internally accessible
+- FK fields are automatically hidden from serialization output (`exclude=True`), but remain internally accessible for `resolve_*` methods
 - Relationship fields are declared in the class body (not in `__subset__`), and must use DTO types
 - Direct use of SQLModel entities as field types is prohibited
 
+!!! warning
+    You cannot use SQLModel entities as field types in your DTOs. Always use DTO types for relationships — declaring `author: User | None` will raise a TypeError. Instead, use `author: UserDTO | None`.
+
 ## SubsetConfig
 
-Declarative DTO configuration (alternative to `__subset__`):
+Configure DTOs declaratively as an alternative to the `__subset__` tuple syntax.
 
 ```python
 from nexusx import SubsetConfig
@@ -92,7 +103,7 @@ class UserDTO(DefineSubset):
 
 ## Loader
 
-Declare DataLoader dependencies in `resolve_*` methods.
+Declare DataLoader dependencies in `resolve_*` methods to load relationship data.
 
 ```python
 from nexusx import Loader
@@ -108,11 +119,12 @@ def resolve_owner(self, loader=Loader(load_users)):
     return loader.load(self.owner_id)
 ```
 
-**Loader dependency names must match relationship names**: `Loader('author')` requires a relationship named `author` in ErManager.
+!!! warning
+    Your Loader dependency names must match relationship names in ErManager. For example, `Loader('author')` requires that ErManager has a relationship named `author` registered.
 
 ## build_dto_select
 
-Helper function that builds a SELECT statement for querying DTO fields from the SQL database:
+Build a SELECT statement for querying DTO fields from the SQL database.
 
 ```python
 from nexusx import build_dto_select
@@ -121,4 +133,5 @@ stmt = build_dto_select(SprintSummary)
 stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
 ```
 
-> **Note:** When ORM relationships use `lazy="noload"` (the recommended pattern with ErManager + Resolver), this function provides minimal benefit since the only pruning is on scalar columns. You can achieve the same result with `select(Entity)` and `DTO.model_validate(entity)`. Use this function when the DTO selects a small subset of scalar columns from a wide table.
+!!! tip
+    When ORM relationships use `lazy="noload"` (the recommended pattern with ErManager + Resolver), this function provides minimal benefit since the only pruning is on scalar columns. You can achieve the same result with `select(Entity)` and `DTO.model_validate(entity)`. Use this function when the DTO selects a small subset of scalar columns from a wide table.

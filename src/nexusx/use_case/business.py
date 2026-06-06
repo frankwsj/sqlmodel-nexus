@@ -8,9 +8,35 @@ and exposed via MCP.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import inspect
+from typing import Any, get_type_hints
 
 USE_CASE_METHODS_ATTR = "__use_case_methods__"
+
+
+def get_return_type(method: Any) -> Any:
+    """Get the return type annotation of a method.
+
+    Unwraps ``classmethod`` if needed, resolves string annotations
+    via ``get_type_hints``, and falls back to ``inspect.signature``.
+
+    Returns ``None`` if no return annotation is found.
+    """
+    func = method.__func__ if isinstance(method, classmethod) else method
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        hints = {}
+    return_anno = hints.get("return")
+    if return_anno is not None:
+        return return_anno
+    try:
+        sig = inspect.signature(func)
+    except (ValueError, TypeError):
+        return None
+    if sig.return_annotation is inspect.Signature.empty:
+        return None
+    return sig.return_annotation
 
 
 def _get_method_kind(func: Any) -> str | None:

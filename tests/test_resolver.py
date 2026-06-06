@@ -603,8 +603,9 @@ class TestPostWithLoader:
     async def test_post_with_collector_and_loader(self):
         """post_* should receive both Collector and Loader parameters."""
 
-        from nexusx.context import Collector, SendTo
         from typing import Annotated
+
+        from nexusx.context import Collector, SendTo
 
         async def tag_loader(keys):
             return [f"tag_{k}" for k in keys]

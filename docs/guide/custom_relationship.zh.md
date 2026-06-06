@@ -1,10 +1,10 @@
 # 自定义关系
 
-对于不存在于 ORM 中的关系——跨服务调用、计算边、非数据库来源——使用 `Relationship` 在实体上声明。
+对于不存在于 ORM 中的关系——跨服务调用、计算边、非数据库来源——用 `Relationship` 在实体上声明。
 
-## 为什么需要自定义关系
+## 何时使用自定义关系
 
-标准场景下，SQLModel 的 `Relationship` 和 `Field(foreign_key=...)` 已经覆盖了数据库内的关系。但以下场景需要自定义：
+标准场景下，SQLModel 的 `Relationship` 和 `Field(foreign_key=...)` 已经覆盖了数据库内的关系。你会在以下场景需要自定义：
 
 - **跨服务调用**：从外部 API 加载关联数据
 - **计算边**：基于业务逻辑而非 FK 的关联
@@ -36,11 +36,11 @@ class Task(SQLModel, table=True):
     title: str
 ```
 
-## Relationship 参数详解
+## Relationship 参数
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `fk` | `str` | 源实体上用于 DataLoader 收集键值的字段名 |
+| `fk` | `str` | 源实体上 DataLoader 用来收集键值的字段名 |
 | `target` | `type` | 目标类型（`Entity` 或 `list[Entity]`） |
 | `name` | `str` | 关系名称，用于隐式自动加载时的字段匹配 |
 | `loader` | `type` or `callable` | DataLoader 类或异步批量函数 |
@@ -70,6 +70,9 @@ class TaskDTO(DefineSubset):
 
 只要满足隐式自动加载的四个条件，自定义关系也会被自动处理。
 
+!!! tip
+    DTO 中的字段名必须匹配 `Relationship` 声明的 `name` 参数。这就是连接点。
+
 ## DataLoader 批量函数
 
 `loader` 可以是 DataLoader 类或异步批量函数。批量函数接收一个键值列表，返回对应的结果：
@@ -85,6 +88,13 @@ async def tags_loader(task_ids: list[int]) -> list[list[Tag]]:
     tags = await fetch_tags_for_tasks(task_ids)
     return group_by_task(tags, task_ids)
 ```
+
+## 回顾
+
+- 自定义关系扩展了 ORM 之外的能力——跨服务、计算、非数据库
+- 在 `__relationships__` 中用 `fk`、`target`、`name`、`loader` 声明
+- 它们与 ORM 关系一样支持隐式自动加载
+- `name` 参数是关系和 DTO 字段之间的连接点
 
 ## 下一步
 

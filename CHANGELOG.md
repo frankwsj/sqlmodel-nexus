@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.5.1
+
+### New Feature: 公共函数 `get_return_type`
+
+将内部函数 `_get_return_type` / `_get_return_annotation` 提取为公共 API `get_return_type()`，用于从 UseCaseService 方法中提取返回类型注解。手动编写 FastAPI 路由时可直接用作 `response_model` 参数，无需重复声明类型。
+
+**Changes：**
+- `src/nexusx/use_case/business.py`: 新增公共函数 `get_return_type(method)`，支持 classmethod unwrap + `get_type_hints` + `inspect.signature` fallback
+- `src/nexusx/use_case/server.py`: 替换 `_get_return_annotation` → `get_return_type`
+- `src/nexusx/use_case/flat_server.py`: 同上
+- `src/nexusx/use_case/router.py`: 替换 `_get_return_type` → `get_return_type`，删除旧私有函数
+- `src/nexusx/__init__.py`: 导出 `get_return_type`
+
+### Documentation: 全站文档结构优化
+
+以 FastAPI 文档风格（渐进式 Q&A、Step 1/2/3、问题驱动）重构全部 guide 和 advanced 页面。消除 `er_diagram.md` 与 `custom_relationship.md` 的内容重叠。`use_case_service.md` 新增 FastAPI 自动路由（`create_use_case_router`）说明，`use_case_fastapi.md` 改用 `get_return_type` 示例。
+
+**Changes：**
+- `docs/guide/`: 重构 `quick_start`、`er_diagram`、`graphql_mode`、`graphql_pagination`、`graphql_auto_query`、`core_api`、`core_api_advanced`、`custom_relationship`、`er_diagram_visual` 共 9 个页面
+- `docs/advanced/`: 重构 `mcp_service`、`use_case_service`、`use_case_fastapi`、`voyager` 共 4 个页面
+- `docs/guide/er_diagram.md`: 精简 Step 2，消除与 `custom_relationship.md` 的内容重复
+
 ## 2.5.0
 
 ### Refactoring: 依赖清理 — 移除 uvicorn 和 greenlet 默认依赖

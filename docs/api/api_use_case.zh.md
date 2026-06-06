@@ -4,7 +4,7 @@ UseCaseService、UseCaseAppConfig、create_use_case_mcp_server、create_use_case
 
 ## UseCaseService
 
-业务服务基类。子类声明 `async classmethod` 方法，元类自动发现公共方法。
+使用 `UseCaseService` 作为业务服务基类。子类声明 `async classmethod` 方法，元类自动发现公共方法。
 
 ```python
 from nexusx.use_case import UseCaseService
@@ -26,12 +26,12 @@ class SprintService(UseCaseService):
         ...
 ```
 
-### 规则
-
-- 方法必须使用 `@query` 或 `@mutation` 装饰器
-- 方法必须是 `async`，第一个参数为 `cls`
-- 方法名以 `_` 开头的不会被自动发现
-- docstring 成为 MCP 工具的描述
+!!! warning
+    遵守以下规则以避免方法发现失败：
+    - 方法必须使用 `@query` 或 `@mutation` 装饰器
+    - 方法必须是 `async`，第一个参数为 `cls`
+    - 方法名以 `_` 开头的不会被自动发现
+    - docstring 成为 MCP 工具的描述
 
 ### 类方法
 
@@ -41,7 +41,7 @@ class SprintService(UseCaseService):
 
 ## UseCaseAppConfig
 
-应用配置类，将一组 UseCaseService 组织为一个应用。
+使用 `UseCaseAppConfig` 将一组 UseCaseService 组织为一个应用。
 
 ```python
 from nexusx.use_case import UseCaseAppConfig
@@ -64,7 +64,7 @@ config = UseCaseAppConfig(
 
 ## create_use_case_mcp_server
 
-创建 UseCase 服务的 MCP 服务端，支持多应用和四层渐进式发现。
+使用 `create_use_case_mcp_server` 创建 UseCase 服务的 MCP 服务端，支持多应用和四层渐进式发现。
 
 ```python
 from nexusx.use_case import create_use_case_mcp_server, UseCaseAppConfig
@@ -80,6 +80,9 @@ mcp = create_use_case_mcp_server(
     name="Project UseCase API",
 )
 ```
+
+!!! tip
+    渐进披露模式适合大型 API。AI 代理通过 4 层工具逐步了解 API 结构：list_apps → list_services → describe_service → call。
 
 ### 参数
 
@@ -99,7 +102,7 @@ mcp = create_use_case_mcp_server(
 
 ## create_flat_mcp_server
 
-创建扁平化 MCP 服务器，每个 UseCase 方法直接暴露为独立 tool — 无渐进披露。
+使用 `create_flat_mcp_server` 创建扁平化 MCP 服务器，每个 UseCase 方法直接暴露为独立 tool — 无渐进披露。
 
 ```python
 from nexusx.use_case import create_flat_mcp_server, UseCaseAppConfig
@@ -114,6 +117,9 @@ mcp = create_flat_mcp_server(
     name="Project API",
 )
 ```
+
+!!! tip
+    扁平化模式适合小型 API 或需要直接访问的场景。每个方法都是独立的 tool，无需多层发现流程。
 
 ### 参数
 
@@ -147,7 +153,7 @@ mcp = create_flat_mcp_server(
 
 ## create_use_case_voyager
 
-创建 Voyager 可视化 ASGI 子应用。
+使用 `create_use_case_voyager` 创建 Voyager 可视化 ASGI 子应用。
 
 ```python
 from nexusx.voyager import create_use_case_voyager
@@ -173,7 +179,7 @@ voyager = create_use_case_voyager(
 
 ## FromContext
 
-标记注解，用于从 MCP 上下文中注入参数。
+使用 `FromContext` 标记注解，从 MCP 上下文中注入参数。
 
 ```python
 from typing import Annotated
@@ -187,7 +193,7 @@ class SprintService(UseCaseService):
 
 ## build_dto_select
 
-辅助函数，构建查询 DTO 所需字段的 SELECT 语句。
+使用 `build_dto_select` 辅助函数构建查询 DTO 所需字段的 SELECT 语句。
 
 ```python
 from nexusx import build_dto_select

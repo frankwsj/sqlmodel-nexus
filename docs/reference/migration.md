@@ -1,26 +1,31 @@
 # Migration Guide
 
-## 1.6.0 → 1.7.0: Voyager ER Diagram 关系字段重构
+## 1.6.0 → 1.7.0: Voyager ER Diagram Relationship Field Refactor
 
-Voyager ER diagram 的关系展示方式从「FK 字段出发」改为「relationship name 字段出发」。
+The Voyager ER diagram changed from FK-field-based to relationship-name-based display.
 
-### 变更说明
+### What Changed
 
-| 项目 | 旧行为 | 新行为 |
-|------|--------|--------|
-| Node 中的关系字段 | 显示 FK 字段（如 `user_id`），标记为 `is_object` | 显示 relationship name + 目标类型（如 `owner: User`） |
-| 边的起点 | 从 FK 字段（如 `user_id`）出发 | 从 relationship 字段（如 `owner`）出发 |
-| Toggle "Object fields" | 显示 FK 字段 | 显示 relationship 字段 |
+| Aspect | Old Behavior | New Behavior |
+|--------|-------------|-------------|
+| Relationship fields in node | Shows FK field (e.g. `user_id`) marked as `is_object` | Shows relationship name + target type (e.g. `owner: User`) |
+| Edge source | Starts from FK field (e.g. `user_id`) | Starts from relationship field (e.g. `owner`) |
+| Toggle "Object fields" | Shows FK fields | Shows relationship fields |
 
-### 影响
+### Impact
 
-- 仅影响 `ErDiagramDotBuilder`（Voyager 可视化）
-- `ErDiagram`（Mermaid 生成器）不受影响
-- 公共 API 无变更，无需迁移代码
+- Only affects `ErDiagramDotBuilder` (Voyager visualization)
+- `ErDiagram` (Mermaid generator) is not affected
+- No public API changes — no code migration needed
 
 ## rpc → use_case Refactor
 
-The RPC module has been fully refactored into the UseCase pattern. Key changes:
+The RPC module has been fully refactored into the UseCase pattern.
+
+!!! warning
+    This is a breaking change. Update all imports and class names before upgrading.
+
+### Name Changes
 
 | Old Name | New Name |
 |----------|----------|
@@ -31,7 +36,7 @@ The RPC module has been fully refactored into the UseCase pattern. Key changes:
 
 ### MCP Tool Changes
 
-Changed from three layers to four layers, adding `list_apps` layer for multi-app management:
+Changed from three layers to four layers, adding `list_apps` for multi-app management:
 
 | Old Tool | New Tool |
 |----------|----------|
@@ -114,10 +119,11 @@ def resolve_owner(self, loader=Loader(UserLoader)):
     return loader.load(self.owner_id)
 ```
 
-**Note**: Implicit auto-loading already covers common scenarios. When the field name matches a relationship and the type is compatible, you don't need to write `resolve_*` methods.
+!!! tip
+    Implicit auto-loading already covers common scenarios. When the field name matches a relationship and the type is compatible, you don't need to write `resolve_*` methods:
 
-```python
-class TaskDTO(DefineSubset):
-    __subset__ = (Task, ("id", "title", "owner_id"))
-    owner: UserDTO | None = None   # Auto-loaded, no resolve_* needed
-```
+    ```python
+    class TaskDTO(DefineSubset):
+        __subset__ = (Task, ("id", "title", "owner_id"))
+        owner: UserDTO | None = None   # Auto-loaded, no resolve_* needed
+    ```

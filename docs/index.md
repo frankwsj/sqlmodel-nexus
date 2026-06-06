@@ -4,25 +4,25 @@ template: home.html
 
 # nexusx
 
-**nexusx** is a progressive SQLModel extension library. Start from ORM entities, extend with non-ORM relationships, auto-generate GraphQL APIs, and use `DefineSubset` to declaratively build response DTOs. Visualize entity relationships and data flows through ER diagrams.
+**nexusx** is a progressive SQLModel extension. You start from ORM entities, add non-ORM relationships, auto-generate GraphQL APIs, and build response DTOs declaratively with `DefineSubset`. Everything is visualized through ER diagrams.
 
-## What nexusx Solves
+## What You'll Get
 
-| Need | What You Write | What the Framework Handles |
+| You want... | You write... | nexusx handles... |
 |------|----------------|---------------------------|
-| GraphQL API | `@query` / `@mutation` decorators | Auto-generate SDL, DataLoader batch-loading relationships |
-| REST / Use-case DTOs | `DefineSubset` + field declarations | Implicit auto-loading, N+1 prevention, ORM→DTO conversion |
+| A GraphQL API | `@query` / `@mutation` decorators | SDL generation, DataLoader batch-loading |
+| REST or use-case DTOs | `DefineSubset` + field declarations | Implicit auto-loading, N+1 prevention, ORM→DTO conversion |
 | Derived fields | `post_*` methods | Auto-execute after nested data is ready |
-| Cross-layer data flow | `ExposeAs`, `SendTo`, `Collector` | Pass context downward or aggregate results upward |
+| Cross-layer data flow | `ExposeAs`, `SendTo`, `Collector` | Pass context downward, aggregate results upward |
 | Non-ORM relationships | `Relationship(...)` | Same DataLoader infrastructure, supports auto-loading |
-| AI-ready API | `create_simple_mcp_server(base=...)` | Progressive MCP tool exposure |
+| An AI-ready API | `create_simple_mcp_server(base=...)` | Progressive MCP tool exposure |
 
-## Use Cases
+## Who Is This For
 
-- **Backend developers**: Quickly build GraphQL and REST APIs from SQLModel entities
-- **Teams**: Auto-generate APIs after models stabilize, reducing hand-written schemas
-- **Projects**: Support both GraphQL for validation and REST for delivery
-- **AI integration**: Expose the same models to AI agents via MCP
+- **Backend developers** building GraphQL and REST APIs from SQLModel entities
+- **Teams** that want auto-generated APIs once models stabilize — no more hand-written schemas
+- **Projects** that need both GraphQL for flexibility and REST for delivery
+- **AI integrations** that expose the same models to AI agents via MCP
 
 ## Learning Path
 
@@ -34,7 +34,7 @@ flowchart LR
     --> p4["MCP / UseCase<br/>AI agents + business services"]
 ```
 
-The guide reuses the same business scenario:
+Every guide reuses the same business scenario so you can follow along step by step:
 
 ```mermaid
 erDiagram
@@ -44,21 +44,21 @@ erDiagram
 
 ### Guide (Tutorial Path)
 
-| Page | Main Question Answered |
+| Page | What You'll Learn |
 |------|------------------------|
-| [Quick Start](./guide/quick_start.md) | How to get a GraphQL API running with minimal code? |
-| [ER Diagram & Non-ORM Relationships](./guide/er_diagram.md) | How to declare and visualize entity relationships? |
-| [GraphQL Mode](./guide/graphql_mode.md) | What is the full workflow from SQLModel to GraphQL API? |
-| [GraphQL Pagination](./guide/graphql_pagination.md) | How to paginate list relationships? |
-| [Auto Query](./guide/graphql_auto_query.md) | How to skip @query and auto-generate by_id / by_filter? |
-| [Core API Mode](./guide/core_api.md) | How do DefineSubset + implicit auto-loading work? |
-| [Core API Advanced](./guide/core_api_advanced.md) | How to use resolve_* / post_* / cross-layer data flow? |
-| [Custom Relationships](./guide/custom_relationship.md) | How to declare and use non-ORM relationships? |
-| [ER Diagram Visualization](./guide/er_diagram_visual.md) | How to generate and embed Mermaid ER diagrams? |
+| [Quick Start](./guide/quick_start.md) | Get a GraphQL API running in 30 seconds |
+| [ER Diagram & Non-ORM Relationships](./guide/er_diagram.md) | Declare and visualize entity relationships |
+| [GraphQL Mode](./guide/graphql_mode.md) | The full workflow from SQLModel to GraphQL API |
+| [GraphQL Pagination](./guide/graphql_pagination.md) | Paginate list relationships |
+| [Auto Query](./guide/graphql_auto_query.md) | Skip `@query` and auto-generate `by_id` / `by_filter` |
+| [Core API Mode](./guide/core_api.md) | Build REST responses with `DefineSubset` + implicit auto-loading |
+| [Core API Advanced](./guide/core_api_advanced.md) | Use `resolve_*` / `post_*` / cross-layer data flow |
+| [Custom Relationships](./guide/custom_relationship.md) | Declare and use non-ORM relationships |
+| [ER Diagram Visualization](./guide/er_diagram_visual.md) | Generate and embed Mermaid ER diagrams |
 
 ### Advanced Guides
 
-| Page | Topic |
+| Page | What You'll Learn |
 |------|-------|
 | [MCP Service](./advanced/mcp_service.md) | Expose SQLModel APIs to AI agents |
 | [UseCase Service](./advanced/use_case_service.md) | Define business services serving both MCP and REST |

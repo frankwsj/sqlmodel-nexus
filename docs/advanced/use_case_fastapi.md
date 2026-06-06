@@ -1,19 +1,55 @@
 # UseCase + FastAPI
 
-Using the same UseCaseService class in FastAPI — routes are thin wrappers, business logic stays in the service.
+Two ways to serve your `UseCaseService` via FastAPI: **auto-generated routes** (recommended) or **manual thin routes** (for finer control over HTTP semantics).
 
-## Route Definitions
+## Step 1: Auto-Generated Routes
+
+The simplest approach — `create_use_case_router` generates POST routes from your service methods:
+
+```python
+from fastapi import FastAPI
+from nexusx import UseCaseAppConfig, create_use_case_router
+
+config = UseCaseAppConfig(
+    name="project",
+    services=[SprintService, TaskService],
+)
+
+app = FastAPI()
+app.include_router(create_use_case_router(config))
+```
+
+This produces endpoints like:
+
+```
+POST /api/sprint_service/list_sprints
+POST /api/sprint_service/get_sprint
+POST /api/task_service/list_tasks
+```
+
+The router automatically reads each method's return annotation and sets it as `response_model` — so OpenAPI docs show the correct response types without any extra configuration.
+
+See [UseCase Service](./use_case_service.md) for the full details including `FromContext` parameter injection.
+
+## Step 2: Manual Thin Routes
+
+When you need GET methods, path parameters, 404 handling, or other HTTP-specific behavior — write routes manually. The pattern is the same: routes are thin wrappers, business logic stays in the service.
+
+### Use return annotations for response_model
+
+To keep types in sync with the service, use `get_return_type` to extract the return annotation:
 
 ```python
 from fastapi import FastAPI, HTTPException
+from nexusx import get_return_type
 
 app = FastAPI()
 
-@app.get("/api/sprints", tags=[SprintService.get_tag_name()])
+@app.get("/api/sprints", response_model=get_return_type(SprintService.list_sprints), tags=[SprintService.get_tag_name()])
 async def get_sprints():
     return await SprintService.list_sprints()
 
-@app.get("/api/sprints/{sprint_id}", tags=[SprintService.get_tag_name()])
+@app.get("/api/sprints/{sprint_id}", response_model=get_return_type(SprintService.get_sprint), tags=[SprintService.get_tag_name()])
 async def get_sprint(sprint_id: int):
     result = await SprintService.get_sprint(sprint_id=sprint_id)
     if result is None:
@@ -21,69 +57,35 @@ async def get_sprint(sprint_id: int):
     return result
 ```
 
-## OpenAPI Grouping
+If the return type changes in the service, the route's `response_model` updates automatically — no duplicate type declarations.
 
-`get_tag_name()` returns the class name as an OpenAPI-compatible tag name:
+### OpenAPI grouping
+
+`get_tag_name()` returns the class name as a tag for FastAPI's `/docs`:
 
 ```python
 SprintService.get_tag_name()  # → "SprintService"
 TaskService.get_tag_name()    # → "TaskService"
 ```
 
-FastAPI's `/docs` page automatically groups routes by service tags.
+## Which Approach?
 
-## Architecture Benefits
+| | Auto-generated routes | Manual thin routes |
+|---|---|---|
+| Setup | One `include_router` call | Write each route |
+| HTTP methods | POST only | GET, POST, PUT, DELETE |
+| `response_model` | From method return annotation (automatic) | From `get_return_type()` |
+| Path parameters | All in request body | Native FastAPI path/query params |
+| 404 handling | Service returns `None` | Route raises `HTTPException` |
+| Best for | Quick setup, MCP + REST parity | Public APIs needing REST conventions |
 
-```
-UseCaseService subclass ──┬── MCP server (AI agents)
-                         └── FastAPI routes (REST API)
-```
+## Recap
 
-- **Single definition of business logic**: Changes only need to be made in one place
-- **Thin route wrappers**: FastAPI routes only handle parameter passing and exception handling
-- **Type safety**: The same DTO types are reused across both modes
-- **Auto-generated OpenAPI**: FastAPI automatically generates openapi.json, usable for TypeScript SDK generation
-
-## Complete Example
-
-```python
-from fastapi import FastAPI
-from nexusx.use_case import UseCaseService, UseCaseAppConfig, create_use_case_mcp_server
-
-# Service definition
-class SprintService(UseCaseService):
-    @classmethod
-    async def list_sprints(cls) -> list[SprintSummary]:
-        ...
-
-    @classmethod
-    async def get_sprint(cls, sprint_id: int) -> SprintSummary | None:
-        ...
-
-# MCP mode
-mcp = create_use_case_mcp_server(
-    apps=[
-        UseCaseAppConfig(name="project", services=[SprintService]),
-    ],
-    name="Sprint API",
-)
-
-# FastAPI mode
-app = FastAPI()
-
-@app.get("/api/sprints", tags=[SprintService.get_tag_name()])
-async def get_sprints():
-    return await SprintService.list_sprints()
-
-@app.get("/api/sprints/{sprint_id}", tags=[SprintService.get_tag_name()])
-async def get_sprint(sprint_id: int):
-    result = await SprintService.get_sprint(sprint_id=sprint_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Sprint not found")
-    return result
-```
+- `create_use_case_router` auto-generates POST routes — `response_model` from return annotations
+- Manual routes give full HTTP control — use `get_return_type()` to keep `response_model` in sync
+- Both approaches delegate to the same `UseCaseService` methods — business logic defined once
 
 ## Next Steps
 
-- [UseCase Service](./use_case_service.md) — Complete UseCaseService definition
+- [UseCase Service](./use_case_service.md) — Define UseCaseService classes and MCP integration
 - [Core API Mode](../guide/core_api.md) — DTO definition and resolve patterns

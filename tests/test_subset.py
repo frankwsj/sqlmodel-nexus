@@ -991,6 +991,7 @@ class TestSubsetValidation:
     def test_subsetconfig_fields_illegal_type_raises(self):
         """SubsetConfig with fields as int should raise ValidationError."""
         from pydantic import ValidationError
+
         from nexusx.subset import SubsetConfig
 
         with pytest.raises(ValidationError):

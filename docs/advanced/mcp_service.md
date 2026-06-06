@@ -1,16 +1,16 @@
 # MCP Service
 
-Expose SQLModel APIs to AI agents — create an MCP service with a single line of code.
+Expose your SQLModel entity graph to AI agents via the Model Context Protocol. An AI agent can query your data through GraphQL — with schema discovery, query execution, and relationship traversal all handled automatically.
 
-## Installation
+## Step 1: Create an MCP Server
+
+Install the MCP dependency first:
 
 ```bash
 pip install nexusx[fastmcp]
 ```
 
-## Simple MCP Server
-
-The simplest mode — pass a SQLModel base class:
+Then create a server from your SQLModel base class:
 
 ```python
 from nexusx.mcp import create_simple_mcp_server
@@ -18,21 +18,38 @@ from nexusx.mcp import create_simple_mcp_server
 mcp = create_simple_mcp_server(
     base=SQLModel,
     name="My API",
+    session_factory=async_session,  # Required for database queries
 )
-mcp.run()  # stdio mode
 ```
 
-Provided tools:
+That's it — your AI agent now has three tools:
 
 | Tool | Purpose |
 |------|---------|
-| `get_schema()` | Get GraphQL schema |
-| `graphql_query(query)` | Execute GraphQL query |
-| `graphql_mutation(mutation)` | Execute GraphQL mutation |
+| `get_schema()` | Get the GraphQL schema |
+| `graphql_query(query)` | Execute a GraphQL query |
+| `graphql_mutation(mutation)` | Execute a GraphQL mutation |
 
-## Multi-App MCP Server
+The AI agent can discover your schema, then query it with full relationship traversal — the same DataLoader batch loading that powers GraphQL mode works under the hood.
 
-Manage APIs for multiple applications:
+## Step 2: Run the Server
+
+Two transport modes:
+
+```python
+# stdio — for CLI-based AI tools (Claude Desktop, Cursor)
+mcp.run()
+
+# HTTP — for web-based AI agents running as a separate service
+mcp.run(transport="sse", host="0.0.0.0", port=8003)
+```
+
+!!! tip
+    Use **stdio** when integrating with desktop AI tools. Use **HTTP** when your AI agent runs as a separate service.
+
+## Step 3: Multi-App Mode
+
+When your AI agent needs to work across multiple databases or domains:
 
 ```python
 from nexusx.mcp import create_mcp_server
@@ -43,11 +60,12 @@ mcp = create_mcp_server(
         {"name": "shop", "base": ShopBase, "description": "Shop API"},
     ],
     name="Multi-App API",
+    session_factory=async_session,
 )
 mcp.run()
 ```
 
-Multi-app tools:
+Multi-app adds app-level navigation tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -56,29 +74,17 @@ Multi-app tools:
 | `get_query_schema(name, app_name)` | Get query schema |
 | `graphql_query(query, app_name)` | Execute query |
 
-## session_factory Configuration
+!!! tip
+    Use `create_simple_mcp_server` for single-app scenarios — fewer tool calls, simpler interaction. Only reach for `create_mcp_server` when the AI agent genuinely needs to cross domain boundaries.
 
-MCP services need a `session_factory` to execute database queries:
+## Recap
 
-```python
-mcp = create_simple_mcp_server(
-    base=SQLModel,
-    name="My API",
-    session_factory=async_session,
-)
-```
-
-## stdio vs HTTP Mode
-
-```python
-# stdio mode (default, for CLI integration)
-mcp.run()
-
-# HTTP mode (for web services)
-mcp.run(transport="sse", host="0.0.0.0", port=8003)
-```
+- `create_simple_mcp_server` — single app, 3 tools, get started in seconds
+- `create_mcp_server` — multiple apps, app-level navigation for cross-domain queries
+- Both support `stdio` (CLI) and `sse` (HTTP) transport
+- `session_factory` is required — the MCP server executes real database queries
 
 ## Next Steps
 
-- [UseCase Service](./use_case_service.md) — Business logic dual-mode service for MCP + REST
+- [UseCase Service](./use_case_service.md) — Business logic services for MCP + REST dual-mode
 - [GraphQL Mode](../guide/graphql_mode.md) — The GraphQL API used under the hood by MCP

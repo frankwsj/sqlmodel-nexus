@@ -14,7 +14,7 @@ handler = GraphQLHandler(
 )
 ```
 
-也可以手动注册：
+你也可以在已有的 handler 上手动注册：
 
 ```python
 from nexusx import add_standard_queries
@@ -22,7 +22,7 @@ from nexusx import add_standard_queries
 add_standard_queries(handler, AutoQueryConfig(session_factory=async_session))
 ```
 
-## by_id：按主键查单个
+## `by_id`：按主键查单个
 
 为每个有且仅有一个主键字段的实体自动生成：
 
@@ -31,7 +31,7 @@ add_standard_queries(handler, AutoQueryConfig(session_factory=async_session))
 { postById(id: 42) { title author { name } } }
 ```
 
-## by_filter：按字段过滤
+## `by_filter`：按字段过滤
 
 为每个实体生成 `FilterInput` 类型和过滤查询：
 
@@ -42,15 +42,19 @@ add_standard_queries(handler, AutoQueryConfig(session_factory=async_session))
 
 `FilterInput` 类型的字段与实体字段一一对应（关系字段除外），支持精确匹配过滤。
 
+!!! tip
+    `by_filter` 只支持精确匹配——不支持 `LIKE`、范围查询或排序。如果需要复杂查询，请写一个自定义的 `@query` 方法。
+
 ## 限制
 
-- **by_id 只支持单主键**：复合主键实体的 by_id 不会被生成
-- **by_filter 是精确匹配**：不支持 LIKE、范围查询等，仅支持字段值精确匹配
-- **需要 session_factory**：AutoQueryConfig 需要自己的 session_factory 参数
+!!! warning
+    - `by_id` 只支持**单主键**——复合主键的实体不会生成 `by_id`
+    - `by_filter` 是**精确匹配**——不支持 `LIKE`、范围查询或排序
+    - `AutoQueryConfig` 需要**自己的** `session_factory` 参数
 
-## 与 @query 共存
+## 与 `@query` 共存
 
-自动查询和手动 `@query` / `@mutation` 可以共存：
+自动查询和手动 `@query` / `@mutation` 可以一起工作：
 
 ```python
 class Post(SQLModel, table=True):
@@ -69,8 +73,15 @@ handler = GraphQLHandler(
 ```
 
 此时 GraphQL schema 同时包含：
-- `postById`、`postByFilter`（自动生成）
-- `postGetRecent`（手动定义）
+
+- `postById`、`postByFilter`——自动生成
+- `postGetRecent`——你的自定义查询
+
+## 回顾
+
+- `AutoQueryConfig` 自动为每个实体生成 `by_id` 和 `by_filter` 查询
+- 只支持单主键和精确匹配过滤
+- 自动查询和自定义 `@query` 方法可以在同一个 schema 中共存
 
 ## 下一步
 

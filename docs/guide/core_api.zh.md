@@ -1,12 +1,12 @@
 # Core API 模式
 
-Core API 模式用于 GraphQL 之外的场景——FastAPI REST 端点、服务层响应组装，或任何用例 DTO。同样的 DataLoader 批量加载，同样的 N+1 预防。
+构建 REST 响应——或任何用例 DTO——享受与 GraphQL 模式相同的 DataLoader 批量加载和 N+1 预防。
 
-核心概念按顺序递进：**隐式自动加载 → resolve_\* → post_\* → 跨层数据流**。
+核心概念按顺序递进：**隐式自动加载 → `resolve_*` → `post_*` → 跨层数据流**。
 
-## Step 1: DefineSubset + 隐式自动加载
+## 第 1 步：DefineSubset + 隐式自动加载
 
-最简单的 Core API 用法：从 SQLModel 实体选择字段，声明关系字段——它们自动加载。
+最简单的 Core API 用法：从 SQLModel 实体选择字段，声明关系字段，它们自动加载。
 
 ```python
 from sqlmodel import SQLModel, select
@@ -24,6 +24,9 @@ class SprintDTO(DefineSubset):
     tasks: list[TaskDTO] = []      # 名称匹配 Sprint.tasks 关系 → 自动加载
 ```
 
+!!! tip
+    心智模型很简单：`DefineSubset` 选择要暴露哪些字段，Resolver 自动填充关系字段。
+
 ## ErManager 初始化
 
 ```python
@@ -35,7 +38,8 @@ Resolver = er.create_resolver()
 - `ErManager` 发现所有 SQLModel 实体及其 ORM 关系
 - `create_resolver()` 返回一个绑定了实体图的 Resolver 类
 
-**注意**：`base` 和 `entities` 参数互斥——不能同时传两个。
+!!! warning
+    `base` 和 `entities` 参数是**互斥的**——你不能同时传两个。
 
 ## 在 FastAPI 中使用
 
@@ -54,7 +58,7 @@ async def get_sprints():
 
 ## 隐式自动加载的四个条件
 
-当以下条件全部满足时，Resolver 自动加载关系字段（无需手写 `resolve_*`）：
+当以下**四个**条件全部满足时，Resolver 自动加载关系字段（无需手写 `resolve_*`）：
 
 1. 字段没有对应的 `resolve_*` 方法
 2. 字段是额外字段（不在 `__subset__` 定义中）
@@ -81,16 +85,26 @@ SprintDTO(id=1, name="Sprint 1")
 ## DTO 类型约束
 
 ```python
-# 错误 —— 禁止直接使用 SQLModel 实体
+# 错误——禁止直接使用 SQLModel 实体
 class TaskDTO(DefineSubset):
     owner: User | None = None  # TypeError!
 
-# 正确 —— 使用 DTO 类型
+# 正确——使用 DTO 类型
 class TaskDTO(DefineSubset):
     owner: UserDTO | None = None  # OK
 ```
 
+!!! warning
+    关系字段的类型**必须**是 DTO 类型（`DefineSubset` 或 `BaseModel` 的子类）。直接使用 SQLModel 实体类型会抛出 `TypeError`。
+
+## 回顾
+
+- `DefineSubset` 从 SQLModel 实体生成 DTO——选择字段，隐藏 FK
+- 隐式自动加载在字段名匹配已注册关系时自动填充关系字段
+- `ErManager` 发现实体并创建 Resolver
+- 关系字段类型必须是 DTO 类型，不能是 SQLModel 实体
+
 ## 下一步
 
-- [Core API 进阶](./core_api_advanced.zh.md) — resolve_*/post_*/跨层数据流
+- [Core API 进阶](./core_api_advanced.zh.md) — `resolve_*` / `post_*` / 跨层数据流
 - [自定义关系](./custom_relationship.zh.md) — 非 ORM 关系声明

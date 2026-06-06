@@ -2,7 +2,12 @@
 
 ## rpc → use_case 重构（当前版本）
 
-RPC 模块已全面重构为 UseCase 模式。主要变化：
+RPC 模块已全面重构为 UseCase 模式。
+
+!!! warning
+    这是一个破坏性变更。升级前需要更新所有 import 和类名。
+
+### 名称变化
 
 | 旧名称 | 新名称 |
 |--------|--------|
@@ -96,10 +101,11 @@ def resolve_owner(self, loader=Loader(UserLoader)):
     return loader.load(self.owner_id)
 ```
 
-**注意**：隐式自动加载已覆盖常见场景。当字段名匹配关系且类型兼容时，不需要手写 `resolve_*` 方法。
+!!! tip
+    隐式自动加载已覆盖常见场景。当字段名匹配关系且类型兼容时，不需要手写 `resolve_*` 方法：
 
-```python
-class TaskDTO(DefineSubset):
-    __subset__ = (Task, ("id", "title", "owner_id"))
-    owner: UserDTO | None = None   # 自动加载，无需 resolve_*
-```
+    ```python
+    class TaskDTO(DefineSubset):
+        __subset__ = (Task, ("id", "title", "owner_id"))
+        owner: UserDTO | None = None   # 自动加载，无需 resolve_*
+    ```

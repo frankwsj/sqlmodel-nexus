@@ -1,8 +1,10 @@
 # Auto Query
 
-Skip the `@query` decorator — the framework auto-generates `by_id` and `by_filter` queries for each entity.
+Writing `@query` methods for basic CRUD is repetitive. Auto Query generates `by_id` and `by_filter` for every entity — no decorators needed.
 
-## AutoQueryConfig
+## Step 1: Enable AutoQueryConfig
+
+One parameter on `GraphQLHandler`:
 
 ```python
 from nexusx import GraphQLHandler, AutoQueryConfig
@@ -14,7 +16,10 @@ handler = GraphQLHandler(
 )
 ```
 
-You can also register manually:
+!!! warning
+    `AutoQueryConfig` needs its **own** `session_factory` parameter — it doesn't inherit from `GraphQLHandler`.
+
+You can also add auto queries to an existing handler:
 
 ```python
 from nexusx import add_standard_queries
@@ -22,7 +27,7 @@ from nexusx import add_standard_queries
 add_standard_queries(handler, AutoQueryConfig(session_factory=async_session))
 ```
 
-## by_id: Single Record by Primary Key
+## Step 2: Use `by_id` for Single Records
 
 Auto-generated for each entity with exactly one primary key field:
 
@@ -31,34 +36,42 @@ Auto-generated for each entity with exactly one primary key field:
 { postById(id: 42) { title author { name } } }
 ```
 
-## by_filter: Field-based Filtering
+That's it — no `@query` method needed. The framework reads your primary key field and generates the query.
 
-Generates a `FilterInput` type and filter query for each entity:
+## Step 3: Use `by_filter` for Field Matching
+
+Each entity also gets a `FilterInput` type and a filter query:
 
 ```graphql
 { userByFilter(filter: { name: "Alice" }, limit: 5) { id name email } }
 { postByFilter(filter: { author_id: 1 }, limit: 10) { id title } }
 ```
 
-The `FilterInput` type fields correspond one-to-one with entity fields (excluding relationship fields), supporting exact-match filtering.
+`FilterInput` fields correspond one-to-one with entity fields (excluding relationship fields), supporting exact-match filtering.
 
-## Limitations
+!!! tip
+    `by_filter` is exact-match only — no `LIKE`, range queries, or ordering. For anything more complex, write a custom `@query` method. Auto and manual queries coexist in the same schema.
 
-- **by_id only supports single primary keys**: by_id is not generated for composite primary key entities
-- **by_filter is exact-match only**: Does not support LIKE, range queries, etc. — only exact field value matching
-- **Requires session_factory**: AutoQueryConfig needs its own session_factory parameter
+## When Auto Queries Fall Short
 
-## Coexistence with @query
+Auto queries cover common patterns, but they have limits:
 
-Auto queries and manual `@query` / `@mutation` can coexist:
+| Limitation | Detail |
+|------------|--------|
+| **Composite primary keys** | `by_id` only supports single PK fields — composite PK entities won't get a `by_id` query |
+| **Exact match only** | `by_filter` doesn't support `LIKE`, range queries, or ordering |
+| **No joins or aggregation** | These are read-only single-table queries |
+
+When you hit these limits, write a `@query` method — it coexists naturally:
 
 ```python
 class Post(SQLModel, table=True):
-    # ... field definitions ...
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
 
     @query
     async def get_recent(cls, days: int = 7) -> list['Post']:
-        """Custom query — beyond auto-generated queries"""
+        """Get posts from the last N days."""
         ...
 
 handler = GraphQLHandler(
@@ -68,11 +81,19 @@ handler = GraphQLHandler(
 )
 ```
 
-The GraphQL schema now contains:
-- `postById`, `postByFilter` (auto-generated)
-- `postGetRecent` (manually defined)
+The resulting schema contains all three:
+
+- `postById`, `postByFilter` — auto-generated
+- `postGetRecent` — your custom query
+
+## Recap
+
+- `AutoQueryConfig` generates `by_id` and `by_filter` for every entity with a single primary key
+- `by_id` looks up a single record by PK; `by_filter` does exact-match field filtering
+- Auto and manual `@query` methods coexist in the same schema
+- For complex queries (ranges, joins, aggregation), write a custom `@query`
 
 ## Next Steps
 
-- [Core API Mode](./core_api.md) — Declarative DTO building for REST endpoints
-- [GraphQL Mode](./graphql_mode.md) — Complete GraphQL capabilities
+- [Core API Mode](./core_api.md) — Build REST responses using the same entity graph
+- [GraphQL Pagination](./graphql_pagination.md) — Add pagination to list relationships

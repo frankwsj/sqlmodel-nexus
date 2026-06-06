@@ -17,13 +17,12 @@ from nexusx.mcp.types.errors import (
     create_error_response,
     create_success_response,
 )
-from nexusx.use_case.business import USE_CASE_METHODS_ATTR
+from nexusx.use_case.business import USE_CASE_METHODS_ATTR, get_return_type
 from nexusx.use_case.context import FromContext
 from nexusx.use_case.manager import UseCaseManager
 from nexusx.use_case.selection import SelectionError, apply_selection
 from nexusx.use_case.server import (
     _coerce_kwargs,
-    _get_return_annotation,
     _serialize_result,
 )
 from nexusx.use_case.types import UseCaseAppConfig
@@ -338,7 +337,7 @@ async def _execute_flat_method(
     # Apply selection if provided
     if selection is not None:
         try:
-            return_anno = _get_return_annotation(method)
+            return_anno = get_return_type(method)
             result = apply_selection(result, return_anno, selection)
         except SelectionError as e:
             return create_error_response(

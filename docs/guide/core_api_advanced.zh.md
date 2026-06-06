@@ -2,7 +2,7 @@
 
 当隐式自动加载不够用时，Core API 提供三个递进的能力：`resolve_*` 自定义加载、`post_*` 派生字段计算、跨层数据流。
 
-## resolve_*：自定义加载
+## `resolve_*`：自定义加载
 
 当字段名不匹配关系，或需要自定义逻辑时，使用 `resolve_*`：
 
@@ -38,11 +38,12 @@ def resolve_permissions(self, loader=Loader(load_permissions)):
     return loader.load(self.owner_id)
 ```
 
-**心智模型**：`resolve_*` 的含义就是"这个字段需要从当前节点之外拿数据"。
+!!! tip
+    心智模型：`resolve_*` 的含义就是"这个字段需要从当前节点之外拿数据"。如果字段名已经匹配了已注册的关系，你就不需要它——隐式自动加载会处理。
 
-## post_*：派生字段
+## `post_*`：派生字段
 
-`post_*` 在当前子树所有 `resolve_*` 和自动加载完成后执行。用于计数、聚合、格式化——任何依赖已加载数据的计算。
+`post_*` 在当前子树**所有** `resolve_*` 和自动加载完成后执行。用于计数、聚合、格式化——任何依赖已加载数据的计算。
 
 ```python
 class SprintDTO(DefineSubset):
@@ -65,18 +66,18 @@ class SprintDTO(DefineSubset):
 3. `post_task_count` → `len(self.tasks)`
 4. `post_contributor_names` → 提取去重的 owner 名称
 
-### resolve_* vs post_*
+### `resolve_*` vs `post_*`
 
 | 问题 | `resolve_*` | `post_*` |
 |------|-------------|----------|
 | 需要外部 IO？ | 是 | 通常不需要 |
 | 后代节点已就绪？ | 没有 | 是 |
-| 适合计数、求和、标签？ | 有时 | 非常适合 |
+| 适合计数、求和、格式化？ | 有时 | 非常适合 |
 | 返回值继续被递归 resolve？ | 会 | 不会 |
 
 ## 跨层数据流
 
-当父节点和子节点需要跨层协作时使用。只有在树结构确实重要时才需要。
+当父节点和子节点需要跨树层级协作时使用。只有在树结构确实重要时才需要。
 
 ### ExposeAs：祖先 → 后代
 
@@ -113,10 +114,8 @@ class TaskDTO(DefineSubset):
         return f"{ancestor_context['sprint_name']} / {self.title}"
 ```
 
-适用场景：
-
-- 子节点需要祖先上下文（sprint 名称、权限信息、租户配置）
-- 父节点需要聚合多个后代结果（贡献者、标签）
+!!! tip
+    在以下场景使用跨层数据流：子节点需要祖先上下文（sprint 名称、权限信息、租户配置），或父节点需要聚合多个后代的结果（贡献者、标签）。
 
 ## Resolver 选项
 
@@ -130,6 +129,13 @@ result = await Resolver(
 ## Loader 依赖名规则
 
 `Loader('author')` 要求 ErManager 中有名为 `author` 的关系。当使用隐式自动加载时通常不需要手写 Loader。
+
+## 回顾
+
+- `resolve_*` 从当前节点之外加载数据——在隐式自动加载不适用时使用
+- `post_*` 在所有后代解析完成后计算派生字段
+- `ExposeAs` 向下传递数据，`SendTo` + `Collector` 向上聚合数据
+- 只在树结构确实重要时才需要跨层数据流
 
 ## 下一步
 

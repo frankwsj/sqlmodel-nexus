@@ -21,7 +21,7 @@ from nexusx.mcp.types.errors import (
     create_error_response,
     create_success_response,
 )
-from nexusx.use_case.business import USE_CASE_METHODS_ATTR
+from nexusx.use_case.business import USE_CASE_METHODS_ATTR, get_return_type
 from nexusx.use_case.context import FromContext
 from nexusx.use_case.manager import UseCaseManager
 from nexusx.use_case.selection import SelectionError, apply_selection
@@ -419,7 +419,7 @@ list_apps()
 
         if selection is not None:
             try:
-                return_anno = _get_return_annotation(method)
+                return_anno = get_return_type(method)
                 result = apply_selection(result, return_anno, selection)
             except SelectionError as e:
                 return create_error_response(
@@ -478,26 +478,6 @@ def _coerce_value(value: Any, annotation: Any) -> Any:
         return adapter.validate_python(value)
     except Exception:
         return value
-
-
-def _get_return_annotation(method: Any) -> Any:
-    """Get the return type annotation for a method."""
-    func = method.__func__ if isinstance(method, classmethod) else method
-    try:
-        hints = get_type_hints(func)
-    except Exception:
-        hints = {}
-    return_anno = hints.get("return")
-    if return_anno is not None:
-        return return_anno
-    # Fallback to inspect.signature
-    try:
-        sig = inspect.signature(func)
-    except (ValueError, TypeError):
-        return None
-    if sig.return_annotation is inspect.Signature.empty:
-        return None
-    return sig.return_annotation
 
 
 def _coerce_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:

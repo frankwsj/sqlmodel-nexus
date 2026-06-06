@@ -1,106 +1,59 @@
-# Voyager Visualization Advanced
+# Voyager Visualization
 
-nexusx includes a built-in Voyager module that provides interactive UseCase service graphs and ER entity relationship visualization.
+Interactive web-based visualization of your UseCase service structure and ER entity relationships. Mount it to FastAPI and explore your model in the browser.
 
-## create_use_case_voyager
+## Step 1: Mount Voyager
 
 ```python
 from nexusx.voyager import create_use_case_voyager
 from nexusx.use_case import UseCaseAppConfig
+from fastapi import FastAPI
 
 voyager = create_use_case_voyager(
     apps=[
-        UseCaseAppConfig(
-            name="project",
-            services=[SprintService, TaskService],
-            description="Project management",
-        ),
+        UseCaseAppConfig(name="project", services=[SprintService, TaskService]),
     ],
-    er_manager=er,
-    name="Project API",
-    module_colors={"sprint": "#0f766e", "task": "#0891b2"},
-    initial_page_policy="first",
-    online_repo_url="https://github.com/example/project",
-    version="1.0.0",
+    er_manager=er,  # Optional: show ER diagram alongside service graph
 )
-```
-
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `apps` | `list[UseCaseAppConfig]` | — | Application configuration list |
-| `er_manager` | `ErManager \| None` | `None` | ErManager instance for ER diagram integration |
-| `name` | `str` | `"UseCase API"` | Project name displayed in UI title |
-| `module_colors` | `dict[str, str] \| None` | `None` | Custom colors for service modules |
-| `initial_page_policy` | `"first" / "full" / "empty"` | `"first"` | Initial page loading policy |
-| `online_repo_url` | `str \| None` | `None` | Online repository URL for source code links |
-| `version` | `str` | `"1.0.0"` | Version number displayed in UI |
-
-### Mount to FastAPI
-
-```python
-from fastapi import FastAPI
 
 app = FastAPI()
 app.mount("/voyager", voyager)
 ```
 
-## REST Endpoints
+Visit `http://localhost:8000/voyager`. You'll see two views:
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/dot` | GET | Complete service dependency graph in DOT format |
-| `/dot-search` | GET | Searchable and filterable DOT graph |
-| `/er-diagram` | GET | Mermaid format ER diagram (requires er_manager) |
-| `/source` | GET | Source code information for service methods |
+### Service graph
 
-## Visualization Content
+Displays your UseCaseService methods, their parameters, return types, and inter-service dependencies:
 
-### UseCase Service Graph
-
-Displays UseCaseService methods, parameters, return types, and their dependencies:
-
-- Method signatures (SDL format)
+- Method signatures in SDL format
 - DTO type definitions
-- Inter-service call relationships
+- Cross-service call relationships
 
-### ER Entity Relationship Diagram
+### ER entity diagram
 
-Integrated via the `er_manager` parameter, showing:
+When you pass `er_manager`, Voyager shows the full entity relationship graph:
 
 - SQLModel entities and their fields
 - ORM relationships (ForeignKey / Relationship)
 - Custom relationships (`__relationships__`)
-- DefineSubset → source entity mappings
-
-### DefineSubset Tracking
-
-Voyager automatically tracks DefineSubset DTO to source entity mappings:
+- DefineSubset DTO → source entity mappings
 
 ```python
 class TaskDTO(DefineSubset):
     __subset__ = (Task, ("id", "title", "owner_id"))
 ```
 
-In Voyager, this displays the `TaskDTO` → `Task` subset relationship along with the selected fields.
+Voyager displays the `TaskDTO` → `Task` subset relationship along with the selected fields.
 
-## Use Cases
+## Step 2: Share Configuration with MCP
 
-- **Development phase**: Visually verify entity relationships and UseCase service structure
-- **Team collaboration**: Share interactive ER diagrams to aid modeling discussions
-- **Debugging**: Check if DataLoader relationships are registered as expected
-- **Documentation**: Export graphs via DOT/Mermaid endpoints for embedding in docs
-
-## Integration with MCP Service
-
-The service structure displayed by Voyager also serves the MCP mode — AI agents can discover and call the same services via MCP tools:
+Voyager and MCP use the same `UseCaseAppConfig` — one configuration, two presentations:
 
 ```python
 from nexusx.use_case import UseCaseAppConfig, create_use_case_mcp_server
 from nexusx.voyager import create_use_case_voyager
 
-# Same set of app configurations
 apps = [
     UseCaseAppConfig(
         name="project",
@@ -119,8 +72,40 @@ app.mount("/mcp", mcp)
 app.mount("/voyager", voyager)
 ```
 
+AI agents discover and call services via MCP. Developers explore the same services interactively via Voyager. Both see the same structure.
+
+## Configuration
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apps` | `list[UseCaseAppConfig]` | — | Application configuration list |
+| `er_manager` | `ErManager \| None` | `None` | ErManager instance for ER diagram |
+| `name` | `str` | `"UseCase API"` | Project name in UI title |
+| `module_colors` | `dict[str, str] \| None` | `None` | Custom colors for service modules |
+| `initial_page_policy` | `"first" / "full" / "empty"` | `"first"` | Initial page loading policy |
+| `online_repo_url` | `str \| None` | `None` | Repository URL for source code links |
+| `version` | `str` | `"1.0.0"` | Version in UI |
+
+### REST endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/dot` | GET | Service dependency graph in DOT format |
+| `/dot-search` | GET | Searchable and filterable DOT graph |
+| `/er-diagram` | GET | Mermaid ER diagram (requires `er_manager`) |
+| `/source` | GET | Source code information for service methods |
+
+## Recap
+
+- Mount Voyager to FastAPI with a single `app.mount()` call
+- Service graph shows UseCaseService methods, DTOs, and dependencies
+- ER diagram shows entity relationships and DefineSubset mappings
+- Shares the same `UseCaseAppConfig` as MCP — one config, two presentations
+
 ## Next Steps
 
 - [ER Diagram Visualization](../guide/er_diagram_visual.md) — Mermaid output and Voyager basics
-- [UseCase Service](./use_case_service.md) — UseCaseService definitions displayed by Voyager
-- [ER Diagram & Non-ORM Relationships](../guide/er_diagram.md) — Entity relationship declaration and discovery
+- [UseCase Service](./use_case_service.md) — Define the services that Voyager displays
+- [MCP Service](./mcp_service.md) — Expose the same services to AI agents

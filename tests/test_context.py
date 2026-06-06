@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from typing import Annotated
 
+import pytest
 from pydantic import BaseModel
 
 from nexusx.context import Collector, ExposeAs, SendTo

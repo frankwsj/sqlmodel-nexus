@@ -1,13 +1,13 @@
 # GraphQL 分页
 
-列表关系支持自动分页，基于 ROW_NUMBER 窗口函数实现。
+列表关系支持自动分页，通过 SQL `ROW_NUMBER()` 窗口函数实现。
 
 ## 启用分页
 
-两个条件：
+你需要两件事：
 
 1. 在列表关系上添加 `order_by`
-2. 创建 GraphQLHandler 时启用分页
+2. 创建 `GraphQLHandler` 时启用分页
 
 ```python
 class User(SQLModel, table=True):
@@ -24,6 +24,9 @@ handler = GraphQLHandler(
     enable_pagination=True,
 )
 ```
+
+!!! warning
+    **没有** `order_by` 的关系不会生成分页支持。必须使用 `"Entity.column"` 字符串格式。
 
 ## 查询语法
 
@@ -62,7 +65,7 @@ handler = GraphQLHandler(
 }
 ```
 
-## 参数说明
+## 参数
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -76,27 +79,27 @@ handler = GraphQLHandler(
 | `has_more` | `Boolean!` | 是否还有更多数据 |
 | `total_count` | `Int!` | 总记录数 |
 
-## 实现原理
+??? info "技术细节"
+    框架使用 SQL `ROW_NUMBER()` 窗口函数实现分页：
 
-框架使用 SQL `ROW_NUMBER()` 窗口函数实现分页：
+    ```sql
+    SELECT * FROM (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id) as rn
+      FROM post
+      WHERE user_id IN (...)
+    ) WHERE rn > offset AND rn <= offset + limit
+    ```
 
-```sql
-SELECT * FROM (
-  SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id) as rn
-  FROM post
-  WHERE user_id IN (...)
-) WHERE rn > offset AND rn <= offset + limit
-```
+    这种方式在单次查询中同时获取分页数据和总数。
 
-这种方式在单次查询中同时获取分页数据和总数。
+## 回顾
 
-## 注意事项
-
-- **列表关系需要 order_by**：没有 `order_by` 的关系不会生成分页支持
-- **order_by 格式**：使用 `"Entity.column"` 格式（字符串引用）
-- 分页只适用于列表关系（ONETOMANY / MANYTOMANY）
+- 在 `GraphQLHandler` 上设置 `enable_pagination=True` 启用分页
+- 列表关系必须有 `order_by`，使用 `"Entity.column"` 字符串格式
+- 在 GraphQL 查询中使用 `limit` 和 `offset` 参数
+- 每个分页关系返回 `{ items, pagination }`，包含 `has_more` 和 `total_count`
 
 ## 下一步
 
-- [自动查询](./graphql_auto_query.zh.md) — 跳过 @query 自动生成查询
+- [自动查询](./graphql_auto_query.zh.md) — 跳过 `@query` 自动生成查询
 - [Core API 模式](./core_api.zh.md) — REST 端点的 DTO 构建

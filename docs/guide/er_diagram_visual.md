@@ -1,30 +1,25 @@
 # ER Diagram Visualization
 
-nexusx provides two visualization approaches: **Mermaid text output** (suitable for embedding in documentation) and **Voyager interactive visualization** (suitable for development debugging and team collaboration).
+You've set up ErManager and declared your relationships. Now you want to see them — to validate the model, discuss with teammates, or document the schema.
 
-## Option 1: Mermaid Text Output
+nexusx provides two approaches: **Mermaid** for static documentation and **Voyager** for interactive exploration.
 
-Suitable for embedding in READMEs, PRs, Wikis, and other static documentation.
+## Step 1: Generate a Mermaid Diagram
 
-### ErDiagram Class
+The quickest way to see your entity graph — one function call:
 
 ```python
-from nexusx import ErDiagram
-
-# From ErManager
+# From an existing ErManager
 diagram = er.get_diagram()
 
-# Or build directly
+# Or build directly from entities
+from nexusx import ErDiagram
 diagram = ErDiagram(entities=[Sprint, Task, User])
-```
 
-### Generate Output
-
-```python
 print(diagram.get_diagram())
 ```
 
-Example output:
+Output:
 
 ```mermaid
 erDiagram
@@ -32,7 +27,9 @@ erDiagram
     Task }o--|| User : "owner"
 ```
 
-### Embed in Markdown
+### Embed in documentation
+
+Wrap the output in a Mermaid code block — GitHub, GitLab, and most Markdown renderers support it natively:
 
 ````markdown
 ```mermaid
@@ -42,78 +39,69 @@ erDiagram
 ```
 ````
 
-GitHub, GitLab, and most Markdown renderers support Mermaid syntax.
+### Available methods
 
-### Available Methods
-
-| Method | Return Value | Description |
-|--------|-------------|-------------|
+| Method | Returns | Use for |
+|--------|---------|---------|
 | `get_diagram()` | `str` | Mermaid ER diagram string |
-| `get_all_entities()` | `list` | All registered entities |
-| `get_all_relationships()` | `list` | All registered relationships |
+| `get_all_entities()` | `list` | Inspecting registered entities |
+| `get_all_relationships()` | `list` | Inspecting registered relationships |
 
-## Option 2: Voyager Interactive Visualization
+## Step 2: Explore Interactively with Voyager
 
-nexusx includes a built-in Voyager module that provides web-based interactive visualization, showing both UseCase service structure and ER entity relationships.
-
-### Quick Start
+Mermaid is static. When you're actively developing or debugging relationships, you need to search, filter, and zoom. Voyager provides a web-based interactive interface.
 
 ```python
 from nexusx.voyager import create_use_case_voyager
 from nexusx.use_case import UseCaseAppConfig
 from fastapi import FastAPI
 
-# Create Voyager application
 voyager = create_use_case_voyager(
     apps=[
         UseCaseAppConfig(name="project", services=[SprintService, TaskService]),
     ],
-    er_manager=er,  # Optional: integrate ER diagram
+    er_manager=er,  # Optional: show ER diagram alongside service graph
 )
 
-# Mount to FastAPI
 app = FastAPI()
 app.mount("/voyager", voyager)
 ```
 
-Visit `http://localhost:8000/voyager` to see the interactive interface.
-
-### Features
-
-- **Service graph**: Display UseCaseService methods and their DTO dependencies
-- **ER diagram**: Display SQLModel entity relationships (ORM + custom)
+Visit `http://localhost:8000/voyager` to browse:
+- **ER diagram**: All SQLModel entity relationships (ORM + custom)
+- **Service graph**: UseCaseService methods and their DTO dependencies
+- **DefineSubset tracking**: DTO → source entity mappings
 - **DOT rendering**: Graphviz format relationship graphs
-- **Interactive browsing**: Search, filter, zoom
-- **DefineSubset tracking**: Display DTO → source entity mappings
 
-### REST Endpoints
+### REST endpoints
 
-| Endpoint | Description |
-|----------|-------------|
+| Endpoint | Returns |
+|----------|---------|
+| `/er-diagram` | Mermaid ER diagram |
 | `/dot` | DOT format service dependency graph |
 | `/dot-search` | Searchable DOT graph |
-| `/er-diagram` | Mermaid ER diagram |
 | `/source` | Source code information |
 
-## Selection Guide
+## Which One to Use?
 
-| Scenario | Mermaid | Voyager |
-|----------|---------|---------|
-| Embed in README / docs | Suitable | Not suitable |
-| PR / Wiki discussion diagrams | Suitable | Not suitable |
-| Rapid validation during development | Fair | Very suitable |
-| Team collaboration discussions | Fair | Very suitable |
-| Debugging relationship loading | Not suitable | Very suitable |
+| | Mermaid | Voyager |
+|---|---------|---------|
+| README / docs embedding | Yes | No |
+| PR / Wiki diagrams | Yes | No |
+| Development debugging | Limited | Yes |
+| Team collaboration | Limited | Yes |
+| Relationship validation | No | Yes |
 
-## Modeling Discussion Workflow
+Start with Voyager during development to interactively verify your model. Once stable, generate Mermaid for your documentation.
 
-1. **Define entities**: SQLModel defines business entities
-2. **Declare relationships**: ORM relationships auto-discovered + non-ORM relationships manually declared
-3. **Quick validation**: Launch Voyager, interactively check relationships in browser
-4. **Document**: Use `ErDiagram.get_diagram()` to generate Mermaid, embed in docs
+## Recap
+
+- `er.get_diagram()` generates Mermaid text — embed in READMEs, PRs, Wikis
+- Voyager provides interactive exploration — search, filter, zoom, debug relationships
+- Use Voyager during development, Mermaid for documentation
+- Both pull from the same relationship data registered in ErManager
 
 ## Next Steps
 
 - [Voyager Advanced](../advanced/voyager.md) — Complete Voyager configuration and advanced features
 - [Custom Relationships](./custom_relationship.md) — Extending ER diagrams with non-ORM relationships
-- [ER Diagram & Non-ORM Relationships](./er_diagram.md) — Relationship declaration and discovery

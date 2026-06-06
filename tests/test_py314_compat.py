@@ -16,7 +16,6 @@ from sqlmodel import Field, SQLModel
 
 from nexusx import DefineSubset, SubsetConfig
 
-
 # ── Simple SQLModel entities for testing ──────────────────────────────
 
 

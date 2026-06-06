@@ -1,10 +1,10 @@
 # MCP API Reference
 
-Complete API reference for MCP service configuration.
+Create MCP services for AI agent integration with GraphQL-based tools.
 
 ## create_simple_mcp_server
 
-Create a single-app MCP service.
+Create a single-app MCP service with GraphQL-based tools.
 
 ```python
 from nexusx.mcp import create_simple_mcp_server
@@ -24,6 +24,9 @@ mcp = create_simple_mcp_server(
 | `name` | `str` | Yes | Service name |
 | `session_factory` | `Callable` | No | Session factory |
 
+!!! tip
+    Use the simple server when you have a single application or are just getting started with MCP integration. It provides a straightforward interface with three core tools: schema inspection, query execution, and mutation execution.
+
 ### Generated Tools
 
 | Tool | Description |
@@ -34,7 +37,7 @@ mcp = create_simple_mcp_server(
 
 ## create_mcp_server
 
-Create a multi-app MCP service.
+Create a multi-app MCP service that manages multiple applications.
 
 ```python
 from nexusx.mcp import create_mcp_server
@@ -55,6 +58,9 @@ mcp = create_mcp_server(
 | `apps` | `list[dict]` | Yes | Application configuration list |
 | `name` | `str` | Yes | Service name |
 
+!!! tip
+    Use the multi-app server when you have multiple distinct domains or bounded contexts (like a blog API and a shop API) that you want to expose as separate apps. This keeps tools organized and allows agents to discover and query each domain independently.
+
 ### Generated Tools
 
 | Tool | Description |
@@ -66,7 +72,9 @@ mcp = create_mcp_server(
 
 ## AppConfig
 
-Multi-app configuration type (the dictionary structure in `create_mcp_server`'s apps parameter):
+Multi-app configuration type that defines each application's structure.
+
+The `apps` parameter in `create_mcp_server` accepts a list of dictionaries with these fields:
 
 | Field | Type | Description |
 |-------|------|-------------|

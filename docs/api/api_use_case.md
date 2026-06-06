@@ -1,10 +1,10 @@
 # UseCase API Reference
 
-Complete API reference for UseCaseService, UseCaseAppConfig, create_use_case_mcp_server, and create_use_case_voyager.
+Create UseCase services and MCP servers with four-layer progressive discovery.
 
 ## UseCaseService
 
-Business service base class. Subclasses declare `async classmethod` methods; the metaclass auto-discovers public methods.
+Define business services with query and mutation methods for AI agent integration.
 
 ```python
 from nexusx.use_case import UseCaseService
@@ -26,6 +26,13 @@ class SprintService(UseCaseService):
         ...
 ```
 
+!!! warning
+    Follow these rules when defining UseCase methods:
+    - Methods must be decorated with `@query` or `@mutation`
+    - Methods must be `async` with `cls` as the first parameter
+    - Methods starting with `_` are not auto-discovered
+    - Docstrings become MCP tool descriptions
+
 ### Rules
 
 - Methods must be decorated with `@query` or `@mutation`
@@ -33,7 +40,7 @@ class SprintService(UseCaseService):
 - Methods starting with `_` are not auto-discovered
 - Docstrings become MCP tool descriptions
 
-### Class Methods
+### Methods
 
 | Method | Description |
 |--------|-------------|
@@ -41,7 +48,7 @@ class SprintService(UseCaseService):
 
 ## UseCaseAppConfig
 
-Application configuration class that organizes a group of UseCaseServices into one application.
+Organize a group of UseCaseServices into one application configuration.
 
 ```python
 from nexusx.use_case import UseCaseAppConfig
@@ -64,7 +71,7 @@ config = UseCaseAppConfig(
 
 ## create_use_case_mcp_server
 
-Create an MCP server for UseCase services, supporting multi-app and four-layer progressive discovery.
+Create an MCP server for UseCase services with multi-app support and four-layer progressive discovery.
 
 ```python
 from nexusx.use_case import create_use_case_mcp_server, UseCaseAppConfig
@@ -99,7 +106,7 @@ mcp = create_use_case_mcp_server(
 
 ## create_flat_mcp_server
 
-Create a flat MCP server that exposes each UseCase method as a separate tool — no progressive disclosure.
+Create a flat MCP server that exposes each UseCase method as a separate tool without progressive disclosure.
 
 ```python
 from nexusx.use_case import create_flat_mcp_server, UseCaseAppConfig
@@ -122,6 +129,9 @@ mcp = create_flat_mcp_server(
 | `apps` | `list[UseCaseAppConfig]` | Yes | Application configuration list |
 | `name` | `str` | No | Server name |
 
+!!! tip
+    Choose the flat server when you have a small API with few methods and want direct access without navigating the discovery layers. Choose the progressive (4-layer) server for large APIs with many services where structured discovery helps agents explore capabilities systematically.
+
 ### Generated MCP Tools
 
 Each `@query`/`@mutation` method becomes an independent tool named `{ServiceName}_{method_name}`. Method parameters are mapped directly from the Python signature (excluding `cls` and `FromContext` params). An optional `selection` parameter is added for field projection.
@@ -136,7 +146,7 @@ Each `@query`/`@mutation` method becomes an independent tool named `{ServiceName
 
 One resource per app: `nexusx://{app_name}` — contains all services' method signatures, descriptions, and SDL type definitions.
 
-### Compared to create_use_case_mcp_server
+### Comparison
 
 | Feature | Progressive (4-layer) | Flat |
 |---------|----------------------|------|
@@ -147,7 +157,7 @@ One resource per app: `nexusx://{app_name}` — contains all services' method si
 
 ## create_use_case_voyager
 
-Create a Voyager visualization ASGI sub-application.
+Create a Voyager visualization ASGI sub-application for exploring UseCase services.
 
 ```python
 from nexusx.voyager import create_use_case_voyager
@@ -173,7 +183,7 @@ voyager = create_use_case_voyager(
 
 ## FromContext
 
-Marker annotation for injecting parameters from MCP context.
+Mark parameters for injection from MCP context.
 
 ```python
 from typing import Annotated
@@ -187,7 +197,7 @@ class SprintService(UseCaseService):
 
 ## build_dto_select
 
-Helper function that builds a SELECT statement for querying DTO fields.
+Build a SELECT statement for querying DTO fields from the SQL database.
 
 ```python
 from nexusx import build_dto_select
@@ -196,4 +206,5 @@ stmt = build_dto_select(SprintSummary)
 stmt = build_dto_select(SprintSummary, where=Sprint.id == sprint_id)
 ```
 
-> **Note:** When ORM relationships use `lazy="noload"` (the recommended pattern with ErManager + Resolver), this function provides minimal benefit since the only pruning is on scalar columns. You can achieve the same result with `select(Entity)` and `DTO.model_validate(entity)`. Use this function when the DTO selects a small subset of scalar columns from a wide table.
+!!! tip
+    When ORM relationships use `lazy="noload"` (the recommended pattern with ErManager + Resolver), this function provides minimal benefit since the only pruning is on scalar columns. You can achieve the same result with `select(Entity)` and `DTO.model_validate(entity)`. Use this function when the DTO selects a small subset of scalar columns from a wide table.

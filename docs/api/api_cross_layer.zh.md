@@ -4,7 +4,7 @@ ExposeAs、SendTo、Collector 的完整 API 参考。
 
 ## ExposeAs
 
-将祖先字段暴露给后代节点，通过 `ancestor_context` 访问。
+使用 `ExposeAs` 将祖先字段暴露给后代节点，后代可通过 `ancestor_context` 访问。
 
 ```python
 from typing import Annotated
@@ -14,6 +14,9 @@ class SprintDTO(DefineSubset):
     __subset__ = (Sprint, ("id", "name"))
     name: Annotated[str, ExposeAs('sprint_name')]
 ```
+
+!!! tip
+    当子节点需要祖先上下文（如 Sprint 名称、权限信息）时使用 `ExposeAs`。这比直接传递引用更灵活，避免了耦合。
 
 ### 参数
 
@@ -33,7 +36,7 @@ class TaskDTO(DefineSubset):
 
 ## SendTo
 
-将后代字段值发送到祖先的 Collector。
+使用 `SendTo` 将后代字段值发送到祖先的 Collector。
 
 ```python
 from typing import Annotated
@@ -52,7 +55,7 @@ class TaskDTO(DefineSubset):
 
 ## Collector
 
-在 `post_*` 方法中接收后代通过 `SendTo` 发送的值。
+使用 `Collector` 在 `post_*` 方法中接收后代通过 `SendTo` 发送的值。
 
 ```python
 from nexusx import Collector
@@ -63,6 +66,9 @@ class SprintDTO(DefineSubset):
     def post_contributors(self, collector=Collector('contributors')):
         return collector.values()
 ```
+
+!!! tip
+    当父节点需要聚合多个后代节点的值（如全部贡献者、全部标签）时使用 Collector + SendTo 模式。
 
 ### Collector 方法
 

@@ -1,10 +1,12 @@
 # Core API Advanced
 
-When implicit auto-loading is not enough, Core API provides three progressive capabilities: `resolve_*` for custom loading, `post_*` for derived field computation, and cross-layer data flow.
+Implicit auto-loading handles most cases: declare a field, name it after a relationship, and it loads. But what about fields that don't match a relationship? Or derived values that depend on already-loaded data? Or parent-child coordination?
 
-## resolve_*: Custom Loading
+This page covers three progressive capabilities: **`resolve_*` → `post_*` → Cross-layer data flow**.
 
-When the field name doesn't match a relationship, or custom logic is needed, use `resolve_*`:
+## Step 1: `resolve_*` — Custom Loading
+
+When the field name doesn't match a relationship, or you need custom loading logic, write a `resolve_*` method:
 
 ```python
 from nexusx import Loader
@@ -20,29 +22,29 @@ class TaskDTO(DefineSubset):
     comment_count: int = 0
 
     def resolve_comments(self, loader=Loader(comments_loader)):
-        """Load comments via a custom batch function."""
         return loader.load(self.id)
 ```
 
-`Loader` accepts two forms:
+### Two ways to use Loader
 
 ```python
-# DataLoader class
+# Pass a DataLoader class
 def resolve_tags(self, loader=Loader(TagLoader)):
     return loader.load(self.id)
 
-# Async batch function
+# Pass an async batch function
 async def load_permissions(user_ids):
     ...
 def resolve_permissions(self, loader=Loader(load_permissions)):
     return loader.load(self.owner_id)
 ```
 
-**Mental model**: `resolve_*` means "this field needs data from outside the current node".
+!!! tip
+    Mental model: `resolve_*` means "this field needs data from outside the current node". If the field name already matches a registered relationship, you don't need it — implicit auto-loading handles it.
 
-## post_*: Derived Fields
+## Step 2: `post_*` — Computed Fields After Loading
 
-`post_*` executes after all `resolve_*` and auto-loading in the current subtree is complete. Use it for counting, aggregation, formatting — any computation that depends on already-loaded data.
+`post_*` runs **after** all `resolve_*` and auto-loading in the current subtree is complete. Use it for counting, aggregation, formatting — anything that depends on already-loaded data:
 
 ```python
 class SprintDTO(DefineSubset):
@@ -58,27 +60,29 @@ class SprintDTO(DefineSubset):
         return sorted({t.owner.name for t in self.tasks if t.owner})
 ```
 
-Execution order:
+### Execution order
 
-1. Implicit auto-loading → `tasks` populated with TaskDTO list
-2. Each TaskDTO → Implicit auto-loading → `owner` populated
+1. Auto-loading → `tasks` populated with TaskDTO list
+2. Each TaskDTO → Auto-loading → `owner` populated
 3. `post_task_count` → `len(self.tasks)`
-4. `post_contributor_names` → Extracts deduplicated owner names
+4. `post_contributor_names` → Deduplicated owner names
 
-### resolve_* vs post_*
+### When to use which
 
-| Question | `resolve_*` | `post_*` |
-|----------|-------------|----------|
+| | `resolve_*` | `post_*` |
+|---|---|---|
 | Needs external IO? | Yes | Usually not |
-| Are descendant nodes ready? | No | Yes |
-| Suitable for counting, summing, tagging? | Sometimes | Very suitable |
-| Will return value continue to be recursively resolved? | Yes | No |
+| Are descendants ready? | No | Yes |
+| Good for counting, summing? | Sometimes | Yes |
+| Return value continues resolving? | Yes | No |
 
-## Cross-layer Data Flow
+## Step 3: Cross-layer Data Flow
 
-Use when parent and child nodes need cross-layer collaboration. Only necessary when the tree structure truly matters.
+When parent and child nodes need to cooperate across tree levels — ancestor context flowing down, or descendant values aggregating up.
 
 ### ExposeAs: Ancestor → Descendant
+
+Pass data down the tree:
 
 ```python
 from typing import Annotated
@@ -88,16 +92,24 @@ class SprintDTO(DefineSubset):
     __subset__ = (Sprint, ("id", "name"))
     name: Annotated[str, ExposeAs('sprint_name')]  # Expose to descendants
     tasks: list[TaskDTO] = []
+
+class TaskDTO(DefineSubset):
+    __subset__ = (Task, ("id", "title", "owner_id"))
+    full_title: str = ""
+
+    def post_full_title(self, ancestor_context):
+        return f"{ancestor_context['sprint_name']} / {self.title}"
 ```
 
 ### SendTo + Collector: Descendant → Ancestor
+
+Aggregate values up the tree:
 
 ```python
 from nexusx import SendTo, Collector
 
 class SprintDTO(DefineSubset):
     __subset__ = (Sprint, ("id", "name"))
-    name: Annotated[str, ExposeAs('sprint_name')]
     tasks: list[TaskDTO] = []
     contributors: list[UserDTO] = []
 
@@ -107,16 +119,10 @@ class SprintDTO(DefineSubset):
 class TaskDTO(DefineSubset):
     __subset__ = (Task, ("id", "title", "owner_id"))
     owner: Annotated[UserDTO | None, SendTo('contributors')] = None  # Send to ancestor
-    full_title: str = ""
-
-    def post_full_title(self, ancestor_context):
-        return f"{ancestor_context['sprint_name']} / {self.title}"
 ```
 
-Applicable scenarios:
-
-- Child nodes need ancestor context (sprint name, permission info, tenant configuration)
-- Parent nodes need to aggregate results from multiple descendants (contributors, tags)
+!!! tip
+    Use cross-layer data flow when child nodes need ancestor context (sprint name, permissions, tenant config) or when parent nodes need to aggregate values from descendants (contributors, tags). If you don't need tree-level coordination, `resolve_*` and `post_*` are enough.
 
 ## Resolver Options
 
@@ -127,9 +133,14 @@ result = await Resolver(
 ).resolve(dtos)
 ```
 
-## Loader Dependency Name Rule
+`context` is available in `post_*` methods via the `ancestor_context` parameter. `loader_params` passes extra parameters to DataLoader functions.
 
-`Loader('author')` requires a relationship named `author` in ErManager. When using implicit auto-loading, you typically don't need to write Loaders manually.
+## Recap
+
+- `resolve_*` loads data from outside the current node — use it when implicit auto-loading doesn't apply
+- `post_*` computes derived fields after all descendants are resolved — counting, aggregation, formatting
+- `ExposeAs` sends ancestor data down; `SendTo` + `Collector` aggregates descendant data up
+- Only use cross-layer data flow when the tree structure truly matters
 
 ## Next Steps
 

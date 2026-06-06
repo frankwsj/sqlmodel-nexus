@@ -1,31 +1,26 @@
-# nexusx Demo
+# nexusx Blog Demo
 
-This demo showcases the nexusx library with a GraphiQL interface.
+A complete blog API — Users, Posts, Comments, and favorites — built with nexusx. You'll see how `@query` / `@mutation` decorators turn SQLModel entities into a working GraphQL API with zero boilerplate.
 
-## Running the Demo
+## Run the Demo
 
 ```bash
 # From project root
 uv sync --extra demo
 
 # Start the server
-uv run uvicorn demo.app:app --reload
+uv run uvicorn demo.blog.app:app --reload
 ```
 
-## Accessing the Interface
+Then open **http://localhost:8000/graphql** in your browser. You'll see the GraphiQL interface.
 
-- **GraphiQL UI**: http://localhost:8000/graphql
-- **GraphQL Endpoint**: POST to http://localhost:8000/graphql
-- **Schema (SDL)**: http://localhost:8000/schema
-- **API Docs**: http://localhost:8000/docs
+## Try It
 
-## Example Queries
-
-### Get all users with their posts
+### Query users and their posts
 
 ```graphql
-query GetUsers {
-  users(limit: 10) {
+{
+  userGetUsers(limit: 10) {
     id
     name
     email
@@ -38,26 +33,11 @@ query GetUsers {
 }
 ```
 
-### Get a specific user
+### Query posts with author info
 
 ```graphql
-query GetUser {
-  user(id: 1) {
-    id
-    name
-    email
-    posts {
-      title
-    }
-  }
-}
-```
-
-### Get all posts with author info
-
-```graphql
-query GetPosts {
-  posts(limit: 10) {
+{
+  postGetPosts(limit: 10) {
     id
     title
     content
@@ -66,30 +46,30 @@ query GetPosts {
       name
       email
     }
+    comments {
+      content
+      author {
+        name
+      }
+    }
   }
 }
 ```
 
-### Create a new user
+### Create a user and a post
 
 ```graphql
-mutation CreateUser {
-  createUser(name: "Charlie", email: "charlie@example.com") {
+mutation {
+  userCreateUser(name: "Charlie", email: "charlie@example.com") {
     id
     name
-    email
   }
 }
-```
 
-### Create a new post
-
-```graphql
-mutation CreatePost {
-  createPost(title: "My New Post", content: "Hello GraphQL!", authorId: 1) {
+mutation {
+  postCreatePost(title: "Hello nexusx", content: "My first post!", authorId: 1) {
     id
     title
-    content
     author {
       name
     }
@@ -97,21 +77,62 @@ mutation CreatePost {
 }
 ```
 
-## Architecture
+### Add a post to favorites (many-to-many)
 
+```graphql
+mutation {
+  userAddFavorite(userId: 1, postId: 1) {
+    id
+    name
+    favoritePosts {
+      id
+      title
+    }
+  }
+}
 ```
-demo/
-├── __init__.py     # Package init
-├── app.py          # FastAPI app with GraphiQL
-├── models.py       # SQLModel entities with @query/@mutation
-├── database.py     # Database configuration and seed data
-└── README.md       # This file
-```
+
+!!! tip
+    All mutations in this demo are **idempotent** — running them twice won't create duplicates. This makes it safe to experiment in the GraphiQL interface.
+
+## What You'll See in This Demo
+
+| Feature | Where to look |
+|---------|---------------|
+| `@query` / `@mutation` decorators | `models.py` — each entity has its own queries |
+| Auto-generated queries | `app.py` — `AutoQueryConfig` adds `by_id` / `by_filter` for free |
+| DataLoader batch loading | Every query with nested relationships — no N+1 |
+| Many-to-many relationships | `User ↔ Post` via `UserFavoritePost` link table |
+| GraphiQL UI | `http://localhost:8000/graphql` |
 
 ## How It Works
 
-1. **Entities** (`models.py`): Define SQLModel classes with `@query` and `@mutation` decorators
-2. **Handler** (`app.py`): `GraphQLHandler` scans entities and builds query/mutation mappings
-3. **Execution**: When a query comes in, the handler parses it and calls the appropriate methods
-4. **Relationships**: DataLoader batch-loads related entities level-by-level (no N+1)
-5. **Pagination**: List relationships with `order_by` support `limit`/`offset` pagination
+The demo has three files:
+
+```
+demo/blog/
+├── models.py     # SQLModel entities with @query / @mutation decorators
+├── app.py        # GraphQLHandler + FastAPI app + GraphiQL
+└── database.py   # Database setup and seed data
+```
+
+1. **You define entities** in `models.py` — standard SQLModel classes with `@query` and `@mutation` methods
+2. **`GraphQLHandler` scans** all entities and auto-generates the GraphQL schema (SDL)
+3. **When a query arrives**, the handler parses it and calls the matching methods
+4. **Relationships are resolved** level-by-level via DataLoader — no matter how many records, each relationship requires only one SQL query
+
+## Endpoints
+
+| URL | Description |
+|-----|-------------|
+| `GET /graphql` | GraphiQL interactive UI |
+| `POST /graphql` | GraphQL query endpoint |
+| `GET /schema` | SDL schema in plain text |
+| `GET /docs` | FastAPI auto-generated docs |
+| `GET /` | Usage instructions and example queries |
+
+## What's Next
+
+- [Quick Start](../../docs/guide/quick_start.md) — Build your own GraphQL API from scratch
+- [GraphQL Mode](../../docs/guide/graphql_mode.md) — Deep dive into the full workflow
+- [Core API Mode](../../docs/guide/core_api.md) — Build REST responses with `DefineSubset`

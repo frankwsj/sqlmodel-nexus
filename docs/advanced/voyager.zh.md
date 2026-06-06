@@ -1,31 +1,28 @@
-# Voyager 可视化进阶
+# Voyager 可视化
 
-nexusx 内置 Voyager 模块，提供交互式的 UseCase 服务图和 ER 实体关系可视化。
+nexusx 内置 Voyager 模块，提供 UseCase 服务结构和 ER 实体关系的交互式可视化。
 
-## create_use_case_voyager
+## 快速开始
 
 ```python
 from nexusx.voyager import create_use_case_voyager
 from nexusx.use_case import UseCaseAppConfig
+from fastapi import FastAPI
 
 voyager = create_use_case_voyager(
     apps=[
-        UseCaseAppConfig(
-            name="project",
-            services=[SprintService, TaskService],
-            description="Project management",
-        ),
+        UseCaseAppConfig(name="project", services=[SprintService, TaskService]),
     ],
-    er_manager=er,
-    name="Project API",
-    module_colors={"sprint": "#0f766e", "task": "#0891b2"},
-    initial_page_policy="first",
-    online_repo_url="https://github.com/example/project",
-    version="1.0.0",
+    er_manager=er,  # 可选：集成 ER 图
 )
+
+app = FastAPI()
+app.mount("/voyager", voyager)
 ```
 
-### 参数
+访问 `http://localhost:8000/voyager` 即可看到交互式界面。
+
+## 参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -37,29 +34,20 @@ voyager = create_use_case_voyager(
 | `online_repo_url` | `str \| None` | `None` | 在线仓库 URL，用于源码链接 |
 | `version` | `str` | `"1.0.0"` | 版本号，显示在 UI |
 
-### 挂载到 FastAPI
-
-```python
-from fastapi import FastAPI
-
-app = FastAPI()
-app.mount("/voyager", voyager)
-```
-
-## REST 端点详解
+## REST 端点
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/dot` | GET | DOT 格式的完整服务依赖图 |
 | `/dot-search` | GET | 支持搜索过滤的 DOT 图 |
-| `/er-diagram` | GET | Mermaid 格式的 ER 图（需要 er_manager） |
+| `/er-diagram` | GET | Mermaid 格式的 ER 图（需要 `er_manager`） |
 | `/source` | GET | 服务方法的源代码信息 |
 
-## 可视化内容
+## 你会看到什么
 
 ### UseCase 服务图
 
-展示 UseCaseService 的方法、参数、返回类型及其之间的依赖关系：
+展示 UseCaseService 的方法、参数、返回类型及其依赖关系：
 
 - 方法签名（SDL 格式）
 - DTO 类型定义
@@ -76,7 +64,7 @@ app.mount("/voyager", voyager)
 
 ### DefineSubset 追踪
 
-Voyager 自动追踪 DefineSubset DTO 到其源实体的映射：
+Voyager 自动追踪 DefineSubset DTO 到源实体的映射：
 
 ```python
 class TaskDTO(DefineSubset):
@@ -118,6 +106,13 @@ app = FastAPI()
 app.mount("/mcp", mcp)
 app.mount("/voyager", voyager)
 ```
+
+## 回顾
+
+- Voyager 提供 UseCase 服务和 ER 图的交互式 Web 可视化
+- 通过一次 `app.mount()` 调用挂载到 FastAPI
+- 与 MCP 共享同一套 `UseCaseAppConfig`——一份配置，多种呈现
+- 在开发阶段用于可视化验证和调试
 
 ## 下一步
 

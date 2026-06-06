@@ -8,7 +8,9 @@
 pip install nexusx
 ```
 
-## 1. 定义 SQLModel 实体
+## 第 1 步：定义 SQLModel 实体
+
+像平常一样创建你的实体：
 
 ```python
 from sqlmodel import SQLModel, Field, Relationship, select
@@ -26,7 +28,11 @@ class Post(SQLModel, table=True):
     author: User | None = Relationship(back_populates="posts")
 ```
 
-## 2. 添加 @query 和 @mutation
+没有什么特别的——这些都是标准的 SQLModel 类。
+
+## 第 2 步：添加 `@query` 和 `@mutation`
+
+直接在实体上添加查询和变更方法，nexusx 会自动发现它们：
 
 ```python
 from nexusx import query, mutation
@@ -51,7 +57,12 @@ class Post(SQLModel, table=True):
             return post
 ```
 
-## 3. 创建 GraphQLHandler
+!!! tip
+    第一个参数必须是 `cls`——装饰器会自动将它转为 classmethod。方法的 docstring 会成为 GraphQL 字段的描述。
+
+## 第 3 步：创建 GraphQLHandler
+
+用 `GraphQLHandler` 把一切串起来：
 
 ```python
 from fastapi import FastAPI
@@ -75,12 +86,16 @@ async def graphql(req: GraphQLRequest):
     return await handler.execute(req.query)
 ```
 
-## 4. 启动并查询
+!!! warning
+    `session_factory` 是**必须的**——DataLoader 需要它来执行批量查询。没有它，关系加载将无法工作。
+
+## 第 4 步：启动并查询
 
 ```bash
 uvicorn app:app
-# 访问 http://localhost:8000/graphql
 ```
+
+打开 http://localhost:8000/graphql，试试这个查询：
 
 ```graphql
 {
@@ -92,12 +107,15 @@ uvicorn app:app
 }
 ```
 
-**关系自动解析**：框架遍历 GraphQL 选择树，逐层收集 FK 值并通过 DataLoader 批量加载。无论返回多少条记录，每个关系只需一次查询。
+框架会遍历 GraphQL 选择树，逐层收集 FK 值，并通过 DataLoader 批量加载关系。**无论返回多少条记录，每个关系只需一次查询。**
 
-## 核心心智模型
+## 回顾
 
-```
-SQLModel 实体 + @query 装饰器 → GraphQL API（SDL + DataLoader 自动生成）
-```
+- 你定义的是标准 SQLModel 实体——不需要任何框架特定的基类
+- `@query` 和 `@mutation` 装饰器将方法变成 GraphQL 字段
+- `GraphQLHandler` 自动发现实体并生成完整的 GraphQL schema
+- DataLoader 通过批量加载自动解析关系——没有 N+1 问题
 
-接下来，了解 [GraphQL 模式](./graphql_mode.zh.md) 的完整能力。
+## 下一步
+
+现在你有了一个可运行的 API，接下来了解 [GraphQL 模式](./graphql_mode.zh.md)的完整能力。

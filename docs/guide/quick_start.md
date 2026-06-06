@@ -8,7 +8,9 @@ From SQLModel entities to a working GraphQL API in 30 seconds.
 pip install nexusx
 ```
 
-## 1. Define SQLModel Entities
+## Step 1: Define SQLModel Entities
+
+Create your entities just like you normally would with SQLModel:
 
 ```python
 from sqlmodel import SQLModel, Field, Relationship, select
@@ -26,7 +28,11 @@ class Post(SQLModel, table=True):
     author: User | None = Relationship(back_populates="posts")
 ```
 
-## 2. Add @query and @mutation
+Nothing new here — these are standard SQLModel classes with relationships.
+
+## Step 2: Add `@query` and `@mutation`
+
+Add query and mutation methods directly on your entities. nexusx will discover them automatically:
 
 ```python
 from nexusx import query, mutation
@@ -51,7 +57,12 @@ class Post(SQLModel, table=True):
             return post
 ```
 
-## 3. Create GraphQLHandler
+!!! tip
+    The first parameter must be `cls` — the decorator converts it to a classmethod automatically. The method's docstring becomes the GraphQL field description.
+
+## Step 3: Create GraphQLHandler
+
+Wire everything up with a `GraphQLHandler`:
 
 ```python
 from fastapi import FastAPI
@@ -75,12 +86,16 @@ async def graphql(req: GraphQLRequest):
     return await handler.execute(req.query)
 ```
 
-## 4. Run and Query
+!!! warning
+    `session_factory` is **required** — DataLoader needs it to execute batch queries. Without it, relationship resolution won't work.
+
+## Step 4: Run and Query
 
 ```bash
 uvicorn app:app
-# Visit http://localhost:8000/graphql
 ```
+
+Open http://localhost:8000/graphql and try this query:
 
 ```graphql
 {
@@ -92,12 +107,15 @@ uvicorn app:app
 }
 ```
 
-**Automatic relationship resolution**: The framework traverses the GraphQL selection tree, collects FK values layer by layer, and batch-loads relationships via DataLoader. No matter how many records are returned, each relationship requires only one query.
+The framework traverses the GraphQL selection tree, collects FK values layer by layer, and batch-loads relationships via DataLoader. **No matter how many records are returned, each relationship requires only one query.**
 
-## Core Mental Model
+## Recap
 
-```
-SQLModel entities + @query decorators → GraphQL API (SDL + DataLoader auto-generated)
-```
+- You define standard SQLModel entities — no framework-specific base class needed
+- `@query` and `@mutation` decorators turn methods into GraphQL fields
+- `GraphQLHandler` auto-discovers entities and generates the full GraphQL schema
+- DataLoader resolves relationships automatically with batch loading — no N+1
 
-Next, learn about the full capabilities of [GraphQL Mode](./graphql_mode.md).
+## Next Steps
+
+Now that you have a working API, learn about the full capabilities of [GraphQL Mode](./graphql_mode.md).

@@ -4,7 +4,7 @@ ErManager、Resolver、DefineSubset、Loader 的完整 API 参考。
 
 ## ErManager
 
-实体关系管理器——发现实体、注册关系、创建 Resolver。
+使用 `ErManager` 管理实体关系——发现实体、注册关系、创建 Resolver。
 
 ```python
 from nexusx import ErManager
@@ -16,7 +16,8 @@ er = ErManager(
 )
 ```
 
-**注意**：`base` 和 `entities` 互斥，不能同时传。
+!!! warning
+    `base` 和 `entities` 互斥，不能同时传递这两个参数。
 
 ### 方法
 
@@ -27,7 +28,7 @@ er = ErManager(
 
 ## Resolver
 
-由 `ErManager.create_resolver()` 返回的类。用于解析 DTO 树。
+`Resolver` 由 `ErManager.create_resolver()` 返回。使用它来解析 DTO 树。
 
 ```python
 Resolver = er.create_resolver()
@@ -60,7 +61,7 @@ result = await Resolver().resolve(dtos)
 
 ## DefineSubset
 
-DTO 基类——从 SQLModel 实体生成 Pydantic 模型。
+使用 `DefineSubset` 作为 DTO 基类——从 SQLModel 实体生成 Pydantic 模型。
 
 ```python
 from nexusx import DefineSubset
@@ -68,6 +69,9 @@ from nexusx import DefineSubset
 class UserDTO(DefineSubset):
     __subset__ = (User, ("id", "name"))
 ```
+
+!!! tip
+    将 `DefineSubset` 理解为"从实体中选取字段的声明"——你告诉框架需要哪些字段，框架负责生成对应的 Pydantic 模型。
 
 ### __subset__ 语法
 
@@ -77,11 +81,13 @@ class UserDTO(DefineSubset):
 
 - FK 字段自动从序列化输出隐藏（`exclude=True`），但内部仍可用
 - 关系字段声明在类体中（非 `__subset__`），类型必须是 DTO 类型
-- 禁止直接使用 SQLModel 实体作为字段类型
+
+!!! warning
+    禁止直接使用 SQLModel 实体作为字段类型。例如 `author: User | None` 会导致 TypeError。必须使用 DTO 类型：`author: UserDTO | None`。
 
 ## SubsetConfig
 
-声明式 DTO 配置（`__subset__` 的替代形式）：
+使用 `SubsetConfig` 进行声明式 DTO 配置（`__subset__` 的替代形式）：
 
 ```python
 from nexusx import SubsetConfig
@@ -92,7 +98,7 @@ class UserDTO(DefineSubset):
 
 ## Loader
 
-在 `resolve_*` 方法中声明 DataLoader 依赖。
+在 `resolve_*` 方法中使用 `Loader` 声明 DataLoader 依赖。
 
 ```python
 from nexusx import Loader
@@ -108,11 +114,12 @@ def resolve_owner(self, loader=Loader(load_users)):
     return loader.load(self.owner_id)
 ```
 
-**Loader 依赖名必须匹配关系名**：`Loader('author')` 要求 ErManager 中有名为 `author` 的关系。
+!!! warning
+    Loader 依赖名必须匹配关系名。例如 `Loader('author')` 要求 ErManager 中有名为 `author` 的关系。
 
 ## build_dto_select
 
-辅助函数，构建从 SQL 数据库查询 DTO 所需字段的 SELECT 语句：
+使用 `build_dto_select` 构建从 SQL 数据库查询 DTO 所需字段的 SELECT 语句：
 
 ```python
 from nexusx import build_dto_select

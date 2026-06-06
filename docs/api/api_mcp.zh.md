@@ -4,7 +4,7 @@ MCP 服务配置的完整 API 参考。
 
 ## create_simple_mcp_server
 
-创建单应用 MCP 服务。
+使用 `create_simple_mcp_server` 创建单应用 MCP 服务。
 
 ```python
 from nexusx.mcp import create_simple_mcp_server
@@ -15,6 +15,9 @@ mcp = create_simple_mcp_server(
     session_factory=async_session,  # session 工厂
 )
 ```
+
+!!! tip
+    适用于单应用场景。如果你需要管理多个独立的应用（如 blog + shop），使用 `create_mcp_server`。
 
 ### 参数
 
@@ -34,7 +37,7 @@ mcp = create_simple_mcp_server(
 
 ## create_mcp_server
 
-创建多应用 MCP 服务。
+使用 `create_mcp_server` 创建多应用 MCP 服务。
 
 ```python
 from nexusx.mcp import create_mcp_server
@@ -47,6 +50,9 @@ mcp = create_mcp_server(
     name="Multi-App API",
 )
 ```
+
+!!! tip
+    适用于需要管理多个独立应用的场景。生成的工具包括 `list_apps`、`list_queries` 等，支持渐进式应用发现。
 
 ### 参数
 
@@ -66,7 +72,7 @@ mcp = create_mcp_server(
 
 ## AppConfig
 
-多应用配置类型（`create_mcp_server` 的 apps 参数中的字典结构）：
+`AppConfig` 是多应用配置类型（`create_mcp_server` 的 apps 参数中的字典结构）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

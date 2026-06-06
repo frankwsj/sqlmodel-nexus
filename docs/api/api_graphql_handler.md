@@ -1,8 +1,10 @@
 # GraphQLHandler API
 
-Core entry point for GraphQL mode — SDL generation, query execution, and GraphiQL integration.
+Core entry point for GraphQL mode — generate SDL, execute queries, and integrate GraphiQL.
 
 ## GraphQLHandler
+
+Create a handler to manage GraphQL schema generation and query execution.
 
 ```python
 from nexusx import GraphQLHandler
@@ -24,6 +26,12 @@ handler = GraphQLHandler(
 | `enable_pagination` | `bool` | `False` | Enable list relationship pagination |
 | `auto_query_config` | `AutoQueryConfig` | `None` | Auto query configuration |
 
+!!! warning
+    You must provide `session_factory` — without it, DataLoader cannot load relationship data and queries will fail.
+
+!!! tip
+    Enable `auto_query_config` to automatically generate `by_id` and `by_filter` queries for all your entities. This is especially useful during development and for CRUD operations.
+
 ### Methods
 
 | Method | Signature | Description |
@@ -32,6 +40,8 @@ handler = GraphQLHandler(
 | `get_graphiql_html` | `get_graphiql_html(endpoint: str = "/graphql") -> str` | Get GraphiQL HTML |
 
 ## @query Decorator
+
+Mark a method as a GraphQL query field.
 
 ```python
 from nexusx import query
@@ -43,12 +53,14 @@ class Post(SQLModel, table=True):
         ...
 ```
 
-- Automatically converted to classmethod
-- Docstring becomes the GraphQL field description
-- First parameter must be `cls`
+- The decorator automatically converts the method to a classmethod
+- The docstring becomes the GraphQL field description
+- The first parameter must be `cls`
 - `query_meta` parameters do not appear in the SDL
 
 ## @mutation Decorator
+
+Mark a method as a GraphQL mutation field.
 
 ```python
 from nexusx import mutation
@@ -60,9 +72,11 @@ class Post(SQLModel, table=True):
         ...
 ```
 
-Same rules as `@query`.
+Follows the same rules as `@query`.
 
 ## AutoQueryConfig
+
+Configure automatic query generation for standard CRUD operations.
 
 ```python
 from nexusx import AutoQueryConfig
@@ -72,20 +86,25 @@ config = AutoQueryConfig(session_factory=async_session)
 
 Auto-generates `by_id` and `by_filter` queries for all entities. Requires entities to have exactly one primary key field.
 
+!!! tip
+    Use `AutoQueryConfig` when you want quick CRUD access without manually writing `@query` methods for each entity. You can always add custom queries alongside the auto-generated ones.
+
 ## QueryParser
 
-Parses GraphQL query strings into `FieldSelection` trees. Typically not used directly.
+Parse GraphQL query strings into `FieldSelection` trees. Typically not used directly — the handler invokes this automatically during query execution.
 
 ## FieldSelection
 
-Query parsing result type, representing a field and its sub-selections in a GraphQL selection set.
+Represents a field and its sub-selections in a GraphQL selection set. This is the output type from `QueryParser` and is used internally during query execution.
 
 ## add_standard_queries
 
-Manually register auto queries to an existing GraphQLHandler:
+Manually register auto queries to an existing GraphQLHandler.
 
 ```python
 from nexusx import add_standard_queries
 
 add_standard_queries(handler, AutoQueryConfig(session_factory=async_session))
 ```
+
+Use this when you want to add standard CRUD queries to a handler that was created without `auto_query_config`.

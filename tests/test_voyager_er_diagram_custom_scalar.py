@@ -18,7 +18,7 @@ async def _count_loader(keys: list[int]) -> list[int]:
     return [0 for _ in keys]
 
 
-async def _children_loader(keys: list[int]) -> list[list["ChildEntity"]]:
+async def _children_loader(keys: list[int]) -> list[list[ChildEntity]]:
     return [[] for _ in keys]
 
 

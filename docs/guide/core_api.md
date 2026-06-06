@@ -1,46 +1,71 @@
 # Core API Mode
 
-The Core API mode is for scenarios beyond GraphQL — FastAPI REST endpoints, service layer response assembly, or any use-case DTO. Same DataLoader batch loading, same N+1 prevention.
+GraphQL mode auto-generates a full query language. But many APIs are simpler — they just need well-shaped REST responses with related data loaded efficiently.
 
-Core concepts progress in order: **Implicit auto-loading → resolve_\* → post_\* → Cross-layer data flow**.
+Core API gives you the same DataLoader batch loading and N+1 prevention, but as building blocks you control: define your DTOs, declare which fields need related data, and let the Resolver assemble the tree.
 
-## Step 1: DefineSubset + Implicit Auto-Loading
+## Step 1: Define DTOs with DefineSubset
 
-The simplest Core API usage: select fields from SQLModel entities, declare relationship fields — they load automatically.
+`DefineSubset` picks fields from your SQLModel entities and generates Pydantic models. Relationship fields declared in the class body are auto-loaded by name:
 
 ```python
-from sqlmodel import SQLModel, select
-from nexusx import DefineSubset, ErManager
+from nexusx import DefineSubset
 
 class UserDTO(DefineSubset):
     __subset__ = (User, ("id", "name"))
 
 class TaskDTO(DefineSubset):
     __subset__ = (Task, ("id", "title", "owner_id"))
-    owner: UserDTO | None = None   # Name matches Task.owner relationship → auto-loaded
+    owner: UserDTO | None = None   # Name matches Task.owner → auto-loaded
 
 class SprintDTO(DefineSubset):
     __subset__ = (Sprint, ("id", "name"))
-    tasks: list[TaskDTO] = []      # Name matches Sprint.tasks relationship → auto-loaded
+    tasks: list[TaskDTO] = []      # Name matches Sprint.tasks → auto-loaded
 ```
 
-## ErManager Initialization
+### What DefineSubset does
+
+- Picks fields from the source entity — only the ones you list appear in the output
+- Hides FK fields automatically — `owner_id` won't appear in the JSON response, but remains accessible internally in `resolve_*`
+- Relationship fields go in the class body, not in `__subset__` — their types must be DTO types
+
+!!! warning
+    Relationship field types **must** be DTO types (`DefineSubset` or `BaseModel` subclasses). Using SQLModel entity types directly will raise a `TypeError`.
 
 ```python
-# At application startup — execute once
+# Wrong — SQLModel entity type
+class TaskDTO(DefineSubset):
+    __subset__ = (Task, ("id", "title"))
+    owner: User | None = None  # TypeError!
+
+# Correct — DTO type
+class TaskDTO(DefineSubset):
+    __subset__ = (Task, ("id", "title"))
+    owner: UserDTO | None = None  # OK
+```
+
+## Step 2: Initialize ErManager and Resolver
+
+At application startup — run once:
+
+```python
+from nexusx import ErManager
+
 er = ErManager(base=SQLModel, session_factory=async_session)
 Resolver = er.create_resolver()
 ```
 
-- `ErManager` discovers all SQLModel entities and their ORM relationships
+- `ErManager` discovers all SQLModel entities and their relationships
 - `create_resolver()` returns a Resolver class bound to the entity graph
 
-**Note**: `base` and `entities` parameters are mutually exclusive — you cannot pass both.
+!!! warning
+    `base` and `entities` parameters are **mutually exclusive** — you can't pass both.
 
-## Using in FastAPI
+## Step 3: Resolve in Your Route
 
 ```python
 from fastapi import FastAPI
+from sqlmodel import select
 
 app = FastAPI()
 
@@ -52,45 +77,41 @@ async def get_sprints():
     return await Resolver().resolve(dtos)
 ```
 
-## Four Conditions for Implicit Auto-Loading
+The Resolver traverses the DTO tree and fills in all relationship fields. You write the query, build the DTOs, and call `resolve()`.
 
-The Resolver automatically loads relationship fields (no need to write `resolve_*`) when all conditions are met:
+## How Auto-Loading Works
 
-1. The field has no corresponding `resolve_*` method
-2. The field is an extra field (not in the `__subset__` definition)
-3. The field name matches a registered ORM/custom relationship
-4. The field type is a BaseModel DTO compatible with the relationship target entity
-
-## DefineSubset Rules
-
-- `__subset__` accepts a tuple `(Entity, ('field1', 'field2'))`
-- FK fields (e.g., `owner_id`) are automatically hidden from serialization output, but remain internally accessible in `resolve_*`
-- Relationship fields are declared in the class body (not in `__subset__`), and must use DTO types
-
-## How It Works
+When the Resolver encounters `SprintDTO`, it resolves the tree layer by layer:
 
 ```
 SprintDTO(id=1, name="Sprint 1")
-  → Implicit auto-load: tasks → [TaskDTO(...), TaskDTO(...)]
-    → Each TaskDTO: Implicit auto-load: owner → UserDTO(...)
-  → Result: complete nested response tree
+  → Auto-load: tasks → [TaskDTO(...), TaskDTO(...)]
+    → Each TaskDTO: Auto-load: owner → UserDTO(...)
+  → Result: complete nested response
 ```
 
 Each relationship executes only one DataLoader query, regardless of how many Sprints or Tasks exist.
 
-## DTO Type Constraint
+### Four conditions for implicit auto-loading
 
-```python
-# Wrong — direct use of SQLModel entity is prohibited
-class TaskDTO(DefineSubset):
-    owner: User | None = None  # TypeError!
+The Resolver auto-loads a field when **all four** conditions are met:
 
-# Correct — use DTO type
-class TaskDTO(DefineSubset):
-    owner: UserDTO | None = None  # OK
-```
+1. The field has no corresponding `resolve_*` method
+2. The field is an extra field (not in `__subset__`)
+3. The field name matches a registered ORM/custom relationship
+4. The field type is a BaseModel DTO compatible with the relationship target
+
+When any condition fails, you can use `resolve_*` to load the field manually — see [Core API Advanced](./core_api_advanced.md).
+
+## Recap
+
+- `DefineSubset` generates DTOs from SQLModel entities — pick fields, hide FKs, declare relationship fields
+- Relationship fields are auto-loaded when the field name matches a registered relationship
+- `ErManager` discovers entities; `Resolver` traverses and assembles the DTO tree
+- Relationship field types must be DTO types, not SQLModel entities
 
 ## Next Steps
 
-- [Core API Advanced](./core_api_advanced.md) — resolve_*/post_*/cross-layer data flow
+- [Core API Advanced](./core_api_advanced.md) — `resolve_*` / `post_*` / cross-layer data flow
 - [Custom Relationships](./custom_relationship.md) — Non-ORM relationship declarations
+- [ER Diagram](./er_diagram.md) — How ErManager discovers relationships

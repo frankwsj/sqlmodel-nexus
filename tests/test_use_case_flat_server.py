@@ -12,7 +12,6 @@ from nexusx.use_case.business import UseCaseService
 from nexusx.use_case.flat_server import create_flat_mcp_server
 from nexusx.use_case.types import UseCaseAppConfig
 
-
 # ──────────────────────────────────────────────────
 # Test DTOs
 # ──────────────────────────────────────────────────
@@ -82,7 +81,6 @@ APP_NAME = "Test_App"
 
 
 def _make_flat_server(enable_mutation: bool = True) -> object:
-    from fastmcp import FastMCP
 
     config = UseCaseAppConfig(
         name=APP_NAME,
