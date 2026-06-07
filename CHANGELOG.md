@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.6.0
+
+### Performance: BFS 并发加载替代 DFS 串行递归（GraphQL QueryExecutor）
+
+将 `QueryExecutor` 的关系字段加载从逐 field 串行递归 DFS 改为 level-by-level BFS，同层多个关系字段通过 `asyncio.gather` 并发加载。
+
+**根因：** DFS 的 `_resolve_relationships` 对 `field_sel.sub_fields` 做 for 循环 + `await`，每个字段必须等上一个字段及其全部子节点加载完毕后才开始。当查询包含同级多个关系字段（如 `users { posts { comments } comments { post } }`），4 轮 SQL 往返串行执行。BFS 将同层字段并发加载，将 4 轮串行减少为 2 轮并发。
+
+**MySQL benchmark（Large: 50 users, 1000 tasks）：**
+
+| 场景 | DFS | BFS | 变化 |
+|------|-----|-----|------|
+| Q1: 1-level | 12.07ms | 11.74ms | -3% |
+| Q2: 2-level | 14.60ms | 15.16ms | +4% |
+| Q3: wide | 11.07ms | 9.13ms | **-18%** |
+| Q4: deep+wide | 117.39ms | 18.39ms | **-84%** |
+
+**Changes：**
+- `src/nexusx/execution/query_executor.py`: 新增 `_FieldJob` 数据类和 `_bfs_resolve` 循环，替代 `_resolve_relationships` + `_load_batch` + `_load_paginated` 的递归模式。新增 `_build_field_jobs` 从 `field_sel.sub_fields` 提取关系字段构造 FieldJob 列表；`_load_field` / `_load_field_batch` / `_load_field_paginated` 只做加载+存储，不递归下沉。序列化层完全不变
+- `benchmarks/bench_graphql.py`: 新增 GraphQL QueryExecutor benchmark，支持 SQLite（默认）和 MySQL（`--mysql`），4 个场景 × 3 个数据规模
+
 ## 2.5.2
 
 ### New Feature: 公共函数 `get_return_type`
