@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from nexusx.context import Collector, ExposeAs, SendTo
-from nexusx.resolver import Resolver
+from nexusx.resolver import Loader, Resolver
 
 # ──────────────────────────────────────────────────────────
 # Test: ExposeAs — ancestor context passing
@@ -391,3 +391,315 @@ class TestAutoLoadSendTo:
         # Each sprint has exactly 2 tasks — titles should appear once each
         assert len(result[0].titles) == 2
         assert len(result[1].titles) == 2
+
+
+# ──────────────────────────────────────────────────────────
+# Test: Level-by-level collection — ancestor also collects
+# ──────────────────────────────────────────────────────────
+
+
+class TestCollectorLevelByLevel:
+    async def test_level_collection(self):
+        """BFS: Collector at parent only collects from its direct children's SendTo.
+
+        In BFS mode, post_* at level N runs before level N+1 is processed.
+        So A's Collector only gets values from B (direct children), not from C (grandchildren).
+        B's Collector gets values from C because C is processed in B's child level.
+        """
+
+        class C(BaseModel):
+            name: Annotated[str, SendTo("c_name")]
+
+        class B(BaseModel):
+            children: list[C]
+            names: list[str] = []
+
+            def post_names(self, collector=Collector("c_name")):
+                return collector.values()
+
+        class A(BaseModel):
+            children: list[B]
+            names: list[str] = []
+
+            def post_names(self, collector=Collector("c_name")):
+                return collector.values()
+
+        tree = A(
+            children=[
+                B(children=[C(name="c1"), C(name="c2")]),
+                B(children=[C(name="c3"), C(name="c4")]),
+            ]
+        )
+        result = await Resolver().resolve(tree)
+
+        # B[0] collects from its direct C children
+        assert result.children[0].names == ["c1", "c2"]
+        # B[1] collects from its direct C children
+        assert result.children[1].names == ["c3", "c4"]
+        # A's Collector is empty: A's post_* runs before B/C are processed
+        assert result.names == []
+
+
+# ──────────────────────────────────────────────────────────
+# Test: Multiple sources (different levels) → same collector
+# ──────────────────────────────────────────────────────────
+
+
+class TestMultipleCollectSource:
+    async def test_collect_from_multiple_levels(self):
+        """BFS: Collector at parent collects from ALL descendants.
+
+        The Resolver propagates collector snapshots through the tree,
+        so A's Collector aggregates values from both B and C nodes.
+        """
+
+        class C(BaseModel):
+            name: Annotated[str, SendTo("field_name")] = ""
+
+            async def post_name(self):
+                return f"{self.name}!"
+
+        class B(BaseModel):
+            name: Annotated[str, SendTo("field_name")]
+            children: list[C] = []
+
+        class A(BaseModel):
+            children: list[B]
+            names: list[str] = []
+
+            def post_names(self, collector=Collector("field_name")):
+                return collector.values()
+
+        tree = A(
+            children=[
+                B(name="b1", children=[C(name="c1")]),
+                B(name="b2", children=[]),
+                B(name="b3", children=[]),
+                B(name="b4", children=[C(name="c4")]),
+            ]
+        )
+        result = await Resolver().resolve(tree)
+
+        # Collector aggregates from ALL descendants (B and C)
+        assert "b1" in result.names
+        assert "b2" in result.names
+        assert "b3" in result.names
+        assert "b4" in result.names
+        assert "c1!" in result.names
+        assert "c4!" in result.names
+
+
+# ──────────────────────────────────────────────────────────
+# Test: Multi-field SendTo + flat/non-flat + Collector identity
+# ──────────────────────────────────────────────────────────
+
+
+class TestCollectorFlatNest:
+    async def test_flat_collection(self):
+        """flat=True flattens list values into a single list."""
+
+        class C(BaseModel):
+            detail: str
+            details: Annotated[list[str], SendTo("c_details")] = []
+
+            def resolve_details(self):
+                return [f"{self.detail}-d1", f"{self.detail}-d2"]
+
+        class BFlat(BaseModel):
+            children: list[C]
+            details_flat: list[str] = []
+
+            def post_details_flat(self, collector=Collector("c_details", flat=True)):
+                return collector.values()
+
+        tree = BFlat(
+            children=[
+                C(detail="x-1"),
+                C(detail="x-2"),
+            ]
+        )
+        result = await Resolver().resolve(tree)
+
+        assert result.details_flat == [
+            "x-1-d1", "x-1-d2",
+            "x-2-d1", "x-2-d2",
+        ]
+
+    async def test_nested_collection(self):
+        """Without flat, list values are preserved as sublists."""
+
+        class C(BaseModel):
+            detail: str
+            details: Annotated[list[str], SendTo("c_details")] = []
+
+            def resolve_details(self):
+                return [f"{self.detail}-d1", f"{self.detail}-d2"]
+
+        class BNested(BaseModel):
+            children: list[C]
+            details_nested: list[list[str]] = []
+
+            def post_details_nested(self, collector=Collector("c_details")):
+                return collector.values()
+
+        tree = BNested(
+            children=[
+                C(detail="x-1"),
+                C(detail="x-2"),
+            ]
+        )
+        result = await Resolver().resolve(tree)
+
+        assert result.details_nested == [
+            ["x-1-d1", "x-1-d2"],
+            ["x-2-d1", "x-2-d2"],
+        ]
+
+
+# ──────────────────────────────────────────────────────────
+# Test: Multiple fields send to same Collector (multi-value tuple)
+# ──────────────────────────────────────────────────────────
+
+
+class TestMultiFieldSendTo:
+    async def test_multiple_fields_same_collector(self):
+        """Multiple fields on same node can send to one Collector."""
+
+        class Child(BaseModel):
+            a: Annotated[int, SendTo("collector")]
+            b: Annotated[int, SendTo("collector")]
+
+        class Parent(BaseModel):
+            children: list[Child]
+            total: int = 0
+
+            def post_total(self, collector=Collector("collector")):
+                s = 0
+                for val in collector.values():
+                    s += val
+                return s
+
+        parent = Parent(children=[Child(a=1, b=2), Child(a=3, b=4)])
+        result = await Resolver().resolve(parent)
+
+        assert result.total == 10
+
+
+# ──────────────────────────────────────────────────────────
+# Test: SubsetConfig send_to parameter
+# ──────────────────────────────────────────────────────────
+
+
+class TestSubsetConfigSendTo:
+    async def test_send_to_via_subset_config(self):
+        """SubsetConfig.send_to should work like SendTo annotation."""
+
+        from sqlmodel import Field, SQLModel
+
+        class SourceModel(SQLModel, table=False):
+            id: int | None = Field(default=None, primary_key=True)
+            a: int
+            b: int
+
+        from nexusx.subset import DefineSubset, SubsetConfig
+
+        class ChildDTO(DefineSubset):
+            __subset__ = SubsetConfig(
+                kls=SourceModel,
+                fields=["a", "b"],
+                send_to=[("a", "collector1"), ("b", "collector1")],
+            )
+
+        class ParentDTO(BaseModel):
+            children: list[ChildDTO]
+            total: int = 0
+
+            def post_total(self, collector=Collector("collector1")):
+                s = 0
+                for val in collector.values():
+                    s += val
+                return s
+
+        parent = ParentDTO(
+            children=[ChildDTO(a=1, b=2), ChildDTO(a=3, b=4)]
+        )
+        result = await Resolver().resolve(parent)
+
+        assert result.total == 10
+
+
+# ──────────────────────────────────────────────────────────
+# Test: post_* with Loader-resolved field — Collector not populated
+# ──────────────────────────────────────────────────────────
+
+
+class TestPostLoaderCollectorLimitation:
+    async def test_collector_empty_after_loader_resolve(self):
+        """post_* that uses Loader to resolve a field cannot collect from that field's descendants.
+
+        BFS resolves the field via Loader, but the resolved children are not
+        traversed for SendTo collection before the parent's post_* runs.
+        So the Collector remains empty.
+        """
+
+        class Book(BaseModel):
+            name: str
+
+        async def book_loader(keys):
+            return [
+                [Book(name=f"book_{k}_1"), Book(name=f"book_{k}_2")]
+                for k in keys
+            ]
+
+        class Student(BaseModel):
+            id: int
+            name: str
+            books: list[Book] = []
+
+            def resolve_books(self, loader=Loader(book_loader)):
+                return loader.load(self.id)
+
+            collected_book_names: list[str] = []
+
+            def post_collected_book_names(self, collector=Collector("book_name")):
+                return collector.values()
+
+        students = [
+            Student(id=1, name="jack"),
+            Student(id=2, name="mike"),
+        ]
+        result = await Resolver().resolve(students)
+
+        # books are loaded, but collector is empty because
+        # resolve_* returns the value without traversing children for SendTo
+        assert result[0].books == [Book(name="book_1_1"), Book(name="book_1_2")]
+        assert result[0].collected_book_names == []
+
+
+# ──────────────────────────────────────────────────────────
+# Test: Collector identity — same alias in same post_* returns same instance
+# ──────────────────────────────────────────────────────────
+
+
+class TestCollectorIdentity:
+    async def test_same_collector_twice_in_post(self):
+        """Two Collector params with same alias in one post_* are the same instance."""
+
+        class Child(BaseModel):
+            name: Annotated[str, SendTo("names")]
+
+        class Parent(BaseModel):
+            children: list[Child] = []
+            is_consistent: bool = False
+
+            def post_is_consistent(
+                self,
+                c1=Collector("names"),
+                c2=Collector("names"),
+            ):
+                return c1.values() == c2.values()
+
+        parent = Parent(children=[Child(name="Alice"), Child(name="Bob")])
+        result = await Resolver().resolve(parent)
+
+        assert result.is_consistent is True

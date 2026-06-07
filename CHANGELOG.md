@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.7.0
+
+### Chore: Collector/SendTo 测试覆盖率提升（+8 测试，12→20）
+
+从 pydantic-resolve 迁移 Collector/SendTo 测试场景，补充 nexusx Core API 的跨层数据流测试覆盖。测试按 nexusx BFS Resolver 的实际行为编写，覆盖了 Collector 从所有后代节点聚合、同节点同 alias 共享 Collector 实例、Loader-resolved 字段不触发 SendTo 等行为边界。
+
+**新增测试：**
+- `TestCollectorLevelByLevel`: 3 层树中 Collector 的层级隔离——子节点声明同名 Collector 会覆盖祖先实例
+- `TestMultipleCollectSource`: B 和 C 同时 SendTo 同一 alias，祖先 Collector 从所有后代聚合
+- `TestCollectorFlatNest`: `flat=True` 展平列表值 vs `flat=False` 保持嵌套结构（拆分为两个独立测试）
+- `TestMultiFieldSendTo`: 同一节点多个字段发送到同一个 Collector
+- `TestSubsetConfigSendTo`: `SubsetConfig.send_to` 参数等价于 `SendTo` 注解
+- `TestPostLoaderCollectorLimitation`: `resolve_*` 通过 Loader 加载的子节点不会触发 SendTo 收集
+- `TestCollectorIdentity`: 同一 `post_*` 中相同 alias 的两个 Collector 参数返回同一实例
+
 ## 2.6.0
 
 ### Performance: BFS 并发加载替代 DFS 串行递归（GraphQL QueryExecutor）
