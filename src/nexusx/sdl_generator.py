@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints
+from typing import Any, get_args, get_origin, get_type_hints
 
 from sqlmodel import SQLModel
 
@@ -13,8 +14,7 @@ from nexusx.type_converter import TypeConverter
 from nexusx.utils.naming import to_graphql_field_name
 from nexusx.utils.schema_helpers import get_core_types, is_input_type
 
-if TYPE_CHECKING:
-    pass
+logger = logging.getLogger(__name__)
 
 
 def _python_type_to_graphql(
@@ -200,7 +200,7 @@ class SDLGenerator:
                             type_hints = get_type_hints(core_type)
                             for field_type in type_hints.values():
                                 collect_from_type(field_type)
-                        except Exception:
+                        except (NameError, AttributeError):
                             pass
 
         # Scan all query and mutation methods
@@ -223,7 +223,7 @@ class SDLGenerator:
                                 type_hints = get_type_hints(filter_input_type)
                                 for field_type in type_hints.values():
                                     collect_from_type(field_type)
-                            except Exception:
+                            except (NameError, AttributeError):
                                 pass
 
                     # Check for @query or @mutation
@@ -233,7 +233,7 @@ class SDLGenerator:
                             globalns = getattr(func, "__globals__", {})
                             localns = {e.__name__: e for e in self.entities}
                             hints = get_type_hints(func, globalns=globalns, localns=localns)
-                        except Exception:
+                        except (NameError, AttributeError):
                             hints = {}
 
                         for param_name, _param in sig.parameters.items():
@@ -241,7 +241,13 @@ class SDLGenerator:
                                 continue
                             if param_name in hints:
                                 collect_from_type(hints[param_name])
+                except (AttributeError, NameError):
+                    continue
                 except Exception:
+                    logger.warning(
+                        "Unexpected error scanning %s.%s",
+                        entity.__name__, name, exc_info=True,
+                    )
                     continue
 
         return input_types
@@ -466,7 +472,13 @@ class SDLGenerator:
                     if hasattr(func, "_graphql_query"):
                         field_def = self._method_to_graphql_field(attr, entity)
                         fields.append(f"  {field_def}")
+                except (AttributeError, NameError):
+                    continue
                 except Exception:
+                    logger.warning(
+                        "Unexpected error collecting query from %s.%s",
+                        entity.__name__, name, exc_info=True,
+                    )
                     continue
 
         return fields
@@ -486,7 +498,13 @@ class SDLGenerator:
                     if hasattr(func, "_graphql_mutation"):
                         field_def = self._method_to_graphql_field(attr, entity)
                         fields.append(f"  {field_def}")
+                except (AttributeError, NameError):
+                    continue
                 except Exception:
+                    logger.warning(
+                        "Unexpected error collecting mutation from %s.%s",
+                        entity.__name__, name, exc_info=True,
+                    )
                     continue
 
         return fields
@@ -511,7 +529,7 @@ class SDLGenerator:
             for e in self.entities:
                 localns[e.__name__] = e
             hints = get_type_hints(func, globalns=globalns, localns=localns)
-        except Exception:
+        except (NameError, AttributeError):
             hints = {}
 
         # Parse method signature
@@ -632,7 +650,7 @@ class SDLGenerator:
                         gql_name = to_graphql_field_name(entity.__name__, func.__name__)
                         if gql_name == operation_name:
                             return (attr, entity)
-                except Exception:
+                except (AttributeError, NameError):
                     continue
 
         return None
@@ -667,7 +685,7 @@ class SDLGenerator:
             localns = {e.__name__: e for e in self.entities}
             hints = get_type_hints(func, globalns=globalns, localns=localns)
             return_type = hints.get("return")
-        except Exception:
+        except (NameError, AttributeError):
             return_type = None
 
         # Collect related entity names

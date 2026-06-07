@@ -1,21 +1,32 @@
 # nexusx
 
-Define once, serve everywhere — GraphQL for validation, REST for production, MCP for AI agents.
+Write SQLModel classes. Get a complete API.
 
 [![pypi](https://img.shields.io/pypi/v/nexusx.svg)](https://pypi.python.org/pypi/nexusx)
 [![PyPI Downloads](https://static.pepy.tech/badge/nexusx/month)](https://pepy.tech/projects/nexusx)
 ![Python Versions](https://img.shields.io/pypi/pyversion/nexusx)
 
-nexusx turns your SQLModel entities into a complete API surface. Define entities and relationships once, then generate GraphQL, REST, and MCP endpoints from that single source.
+Most projects repeat the same data model three or four times — once for the database, once for the API response, once for GraphQL. nexusx eliminates that. Define your entities and relationships in SQLModel, and you get:
 
-## Key Features
+- **GraphQL** — auto-generated schema, relationships resolve automatically, no N+1
+- **REST** — typed response DTOs, pick fields like GraphQL but in Python
+- **MCP** — your business logic exposed as tools for AI agents
 
-- **Auto-generated GraphQL** — `@query`/`@mutation` decorators on SQLModel classes produce a full schema with DataLoader relationship resolution (one query per level, no N+1)
-- **Typed REST via DefineSubset** — Pick fields, hide FKs, declare relationship fields — they auto-load by name through the same DataLoader engine
-- **MCP for AI agents** — Four-layer progressive disclosure (apps → services → methods → execution) lets AI agents discover and call your business logic
-- **One service, two channels** — `UseCaseService` subclasses serve both MCP tools and FastAPI routes from the same class
-- **Cross-layer data flow** — `ExposeAs` (ancestor → descendant), `SendTo` + `Collector` (descendant → ancestor) for tree-level coordination
-- **Visual ER diagrams** — Mermaid output for docs, Voyager for interactive exploration
+One model, multiple surfaces — and more protocols on the way.
+
+```mermaid
+flowchart LR
+    sqlmodel["SQLModel"]
+
+    sqlmodel --> graphql["GraphQL"]
+    graphql --> mcp1["MCP"]
+
+    sqlmodel --> usecase["UseCaseService"]
+    usecase --> rest["REST"]
+    usecase --> mcp2["MCP"]
+    usecase -.-> jsonrpc["JSON-RPC"]
+    usecase -.-> ws["WebSocket"]
+```
 
 ## Install
 
@@ -82,7 +93,7 @@ Query relationships — they resolve automatically via DataLoader, one query per
 
 ### Step 3: Add typed REST endpoints
 
-When you're ready for production, add `DefineSubset` DTOs on the same entities:
+When you're ready for production, add `DefineSubset` DTOs on the same entities. `DefineSubset` is the Python equivalent of GraphQL field selection — instead of writing `{ id name }` in a query string, you declare `("id", "name")` in a Python class and get a typed, validated DTO:
 
 ```python
 from nexusx import DefineSubset, ErManager

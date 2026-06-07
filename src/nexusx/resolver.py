@@ -37,6 +37,7 @@ from typing import Any, TypeVar, get_args, get_origin
 
 from aiodataloader import DataLoader
 from pydantic import BaseModel
+from pydantic.errors import PydanticUserError
 
 from nexusx.context import (
     Collector,
@@ -438,7 +439,7 @@ class Resolver:
                 kwargs[fname] = val
         try:
             return dto_cls(**kwargs)
-        except Exception:
+        except (PydanticUserError, NameError):
             # Handle forward references from __future__ import annotations.
             # Build a namespace with all known DefineSubset DTOs so
             # model_rebuild can resolve type names like 'UserDTO'.

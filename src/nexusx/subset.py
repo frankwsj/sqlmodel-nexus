@@ -65,12 +65,13 @@ def get_subset_source(dto_class: type[BaseModel]) -> type[SQLModel] | None:
 def _get_relationship_names(entity: type[SQLModel]) -> set[str]:
     """Get relationship field names from a SQLModel entity via SQLAlchemy inspection."""
     from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy.exc import NoInspectionAvailable
 
     try:
         mapper = sa_inspect(entity)
         if mapper and hasattr(mapper, "relationships"):
             return {rel.key for rel in mapper.relationships}
-    except Exception:
+    except NoInspectionAvailable:
         pass
     return set()
 
