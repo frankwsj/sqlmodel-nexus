@@ -4,7 +4,6 @@ Write SQLModel classes. Get a complete API.
 
 [![pypi](https://img.shields.io/pypi/v/nexusx.svg)](https://pypi.python.org/pypi/nexusx)
 [![PyPI Downloads](https://static.pepy.tech/badge/nexusx/month)](https://pepy.tech/projects/nexusx)
-![Python Versions](https://img.shields.io/pypi/pyversion/nexusx)
 
 Most projects repeat the same data model three or four times — once for the database, once for the API response, once for GraphQL. nexusx eliminates that. Define your entities and relationships in SQLModel, and you get:
 
