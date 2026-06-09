@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.8.0
+
+### Bug Fix: 分页 limit 参数未传递到 QueryExecutor
+
+修复 GraphQL 分页查询中 `limit` 参数被静默丢弃的问题。`tasks(limit: 1)` 等查询实际返回全部数据。
+
+**根因：** `_build_field_jobs` 在处理分页关系时将 `child_sel` 替换为 `items_sel`（items 子选择），但 `_FieldJob` 只保存了替换后的选择。`_load_field_paginated` 从 `child_sel.arguments` 提取分页参数，而 `limit` 存在于原始的 tasks 字段选择上，items 子选择没有 arguments，导致 limit 丢失。
+
+**Changes：**
+- `src/nexusx/execution/query_executor.py`: `_FieldJob` 新增 `original_sel` 字段；`_build_field_jobs` 在替换为 items_sel 时保存原始选择；`_load_field_paginated` 从 `original_sel` 提取分页参数
+
+### Bug Fix: 分页 has_next_page 差一错误 & Resolver 缓存泄漏
+
+- `pagination.py`: 修复 `has_next_page` 在 `end == total_count` 时错误返回 True 的 off-by-one 问题
+- `resolver.py`: 修复 `_ClassMeta` 缓存和 `scan_expose_fields` / `scan_send_to_fields` 模块级缓存未清理导致的内存泄漏
+
+### Performance: BFS 跳过纯数据子树
+
+Resolver BFS 遍历新增优化：当子树中没有 `resolve_*`、`post_*`、`ExposeAs`、`SendTo` 等需要执行的方法时，跳过 BFS 下沉，直接返回。纯数据 DTO（只有标量字段）不再进入遍历队列。
+
+**Changes：**
+- `src/nexusx/resolver.py`: 新增 `_has_work` 检查，`_process_level` 在入队前过滤无工作子树
+
+### Chore: 测试覆盖率体系建立 + 核心模块测试补充
+
+新增 `pytest-cov` 到 dev 依赖，配置 `--cov-report=term-missing` 和排除规则（`TYPE_CHECKING`、`NotImplementedError`）。新增 75 个测试覆盖 loader 分页加载器、query_executor、response_builder、sdl_generator。
+
+**覆盖率变化：**
+
+| 模块 | 2.7.0 | 2.8.0 |
+|------|-------|-------|
+| `loader/factories.py` | 50% | 90% |
+| `loader/pagination.py` | 52% | 98% |
+| `execution/query_executor.py` | 73% | 98% |
+| `response_builder.py` | 74% | 90% |
+| `sdl_generator.py` | 82% | 88% |
+| 总体 | 75% | 79% |
+
+**新增文件：**
+- `tests/test_loader_pagination.py` — 29 个测试（分页 O2M/M2M loader、PageArgs、create_result_type）
+
+**新增测试（追加到已有文件）：**
+- `tests/test_query_executor.py` — +16 个测试（分页 e2e、边界条件、序列化）
+- `tests/test_response_builder.py` — +23 个测试（forward ref、annotation 提取、scalar model）
+- `tests/test_sdl_generator.py` — +8 个测试（分页类型、默认参数、类型转换）
+
+**Changes：**
+- `pyproject.toml`: 新增 `pytest-cov>=6.0.0`、`[tool.coverage.run]`、`[tool.coverage.report]` 配置
+
 ## 2.7.0
 
 ### Chore: Collector/SendTo 测试覆盖率提升（+8 测试，12→20）
