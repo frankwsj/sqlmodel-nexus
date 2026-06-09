@@ -54,7 +54,7 @@ Example (Core API mode):
 
 from __future__ import annotations
 
-from nexusx.context import Collector, ExposeAs, SendTo
+from nexusx.context import AutoLoad, Collector, ExposeAs, SendTo
 from nexusx.decorator import mutation, query
 from nexusx.er_diagram import ErDiagram
 from nexusx.handler import GraphQLHandler
@@ -109,6 +109,7 @@ __all__ = [
     "ExposeAs",
     "SendTo",
     "Collector",
+    "AutoLoad",
     # Custom relationships
     "Relationship",
     "ErDiagram",
