@@ -241,8 +241,8 @@ class AmbigTarget(SQLModel, table=True):
 
 
 class TestGetLoaderByNameAmbiguity:
-    async def test_ambiguous_name_logs_warning(self, caplog):
-        """get_loader_by_name should log a warning when name is ambiguous."""
+    async def test_ambiguous_name_raises_error(self):
+        """get_loader_by_name should raise ValueError when name is ambiguous."""
 
         async def session_factory():
             pass  # Won't be called
@@ -252,12 +252,8 @@ class TestGetLoaderByNameAmbiguity:
             session_factory=session_factory,
         )
 
-        with caplog.at_level(logging.WARNING, logger="nexusx.loader.registry"):
-            loader = registry.get_loader_by_name("items")
-
-        assert loader is not None
-        assert "Ambiguous loader lookup" in caplog.text
-        assert "items" in caplog.text
+        with pytest.raises(ValueError, match="Ambiguous loader lookup.*items"):
+            registry.get_loader_by_name("items")
 
     async def test_unique_name_no_warning(self, caplog):
         """get_loader_by_name should not warn when name is unique."""
