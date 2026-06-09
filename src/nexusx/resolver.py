@@ -134,6 +134,9 @@ class _ClassMeta:
     post_params: dict[str, _MethodParamInfo] = field(default_factory=dict)
     # Collector aliases found in post_* methods: alias -> flat
     collector_aliases: dict[str, bool] = field(default_factory=dict)
+    # Whether this class or any descendant needs traversal.
+    # None = not yet computed; True/False = computed result.
+    should_traverse: bool | None = None
 
 
 def _analyze_method_params(
@@ -216,6 +219,37 @@ def _get_class_meta(kls: type) -> _ClassMeta:
     meta = _build_class_meta(kls)
     _class_meta_cache[kls] = meta
     return meta
+
+
+def _compute_should_traverse(kls: type) -> bool:
+    """Determine if a class or any of its BaseModel descendants needs traversal.
+
+    A class needs traversal if it has resolve/post methods, ExposeAs/SendTo
+    annotations, Collector parameters, or any descendant that does.
+    Handles self-referencing types by using a sentinel value.
+    Result is cached in ``_ClassMeta.should_traverse``.
+    """
+    meta = _get_class_meta(kls)
+
+    if meta.should_traverse is not None:
+        return meta.should_traverse
+
+    # Sentinel: mark as True to handle cycles (self-referencing types).
+    meta.should_traverse = True
+
+    # Check own configuration
+    if (meta.resolve_methods or meta.post_methods or meta.collector_aliases
+            or scan_expose_fields(kls) or scan_send_to_fields(kls)):
+        return True
+
+    # Check descendants
+    for field_info in kls.model_fields.values():
+        child_cls = Resolver._do_extract_dto_cls(field_info.annotation)
+        if child_cls is not None and _compute_should_traverse(child_cls):
+            return True
+
+    meta.should_traverse = False
+    return False
 
 
 # ──────────────────────────────────────────────────────────
@@ -637,7 +671,8 @@ class Resolver:
         # Batch auto-load: group by relationship, collect FK values, load_many
         auto_loaded_fields = await self._batch_auto_load(level_state, next_level)
 
-        # Collect existing object-field children (skip fields set by auto-load)
+        # Collect existing object-field children (skip fields set by auto-load
+        # and children whose type has no traversal work to do)
         for item, _meta, new_ancestor_ctx, merged_collectors in level_state:
             node = item.node
             for field_name in type(node).model_fields:
@@ -647,14 +682,16 @@ class Resolver:
                 if val is None:
                     continue
                 if isinstance(val, BaseModel):
-                    next_level.append(_WorkItem(
-                        val, node, new_ancestor_ctx, merged_collectors,
-                    ))
-                elif isinstance(val, list) and val and isinstance(val[0], BaseModel):
-                    for c in val:
+                    if _compute_should_traverse(type(val)):
                         next_level.append(_WorkItem(
-                            c, node, new_ancestor_ctx, merged_collectors,
+                            val, node, new_ancestor_ctx, merged_collectors,
                         ))
+                elif isinstance(val, list) and val and isinstance(val[0], BaseModel):
+                    if _compute_should_traverse(type(val[0])):
+                        for c in val:
+                            next_level.append(_WorkItem(
+                                c, node, new_ancestor_ctx, merged_collectors,
+                            ))
 
         # ── Phase 2: Process next level ──
         if next_level:

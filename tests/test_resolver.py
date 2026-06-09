@@ -697,3 +697,237 @@ class TestExtractDtoCls:
         fi = FieldInfo(annotation=list[MyDTO])
         result = Resolver()._extract_dto_cls(fi)
         assert result is MyDTO
+
+
+# ──────────────────────────────────────────────────────────
+# Test: should_traverse optimization
+# ──────────────────────────────────────────────────────────
+
+
+class TestShouldTraverse:
+    async def test_traverses_through_passthrough_node_to_leaf_with_post(self):
+        """Intermediate node without methods should still be traversed if descendant has post_*."""
+
+        class Leaf(BaseModel):
+            value: str
+            processed: str = ""
+
+            def post_processed(self):
+                return f"processed_{self.value}"
+
+        class Middle(BaseModel):
+            name: str
+            leaf: Leaf
+
+        class Root(BaseModel):
+            middle: Middle
+
+        root = Root(middle=Middle(name="M1", leaf=Leaf(value="V1")))
+        result = await Resolver().resolve(root)
+
+        assert result.middle.leaf.processed == "processed_V1"
+
+    async def test_shared_type_at_multiple_levels(self):
+        """Same DTO class at different depths should work correctly."""
+
+        class Tag(BaseModel):
+            label: str
+            display: str = ""
+
+            def post_display(self):
+                return f"[{self.label}]"
+
+        class Item(BaseModel):
+            name: str
+            tag: Tag
+
+        class Container(BaseModel):
+            items: list[Item]
+            top_tag: Tag
+
+        container = Container(
+            items=[
+                Item(name="A", tag=Tag(label="t1")),
+                Item(name="B", tag=Tag(label="t2")),
+            ],
+            top_tag=Tag(label="top"),
+        )
+        result = await Resolver().resolve(container)
+
+        assert result.top_tag.display == "[top]"
+        assert result.items[0].tag.display == "[t1]"
+        assert result.items[1].tag.display == "[t2]"
+
+    async def test_expose_as_prevents_skip(self):
+        """Nodes with ExposeAs should not be skipped."""
+
+        from typing import Annotated
+
+        from nexusx.context import ExposeAs
+
+        class Child(BaseModel):
+            name: str
+            context_val: str = ""
+
+            def post_context_val(self, ancestor_context=None):
+                if ancestor_context is None:
+                    ancestor_context = {}
+                return ancestor_context.get("greeting", "")
+
+        class Parent(BaseModel):
+            greeting: Annotated[str, ExposeAs("greeting")]
+            child: Child
+
+        parent = Parent(greeting="Hello", child=Child(name="C1"))
+        result = await Resolver().resolve(parent)
+
+        assert result.child.context_val == "Hello"
+
+    async def test_send_to_prevents_skip(self):
+        """Nodes with SendTo should not be skipped."""
+
+        from typing import Annotated
+
+        from nexusx.context import Collector, SendTo
+
+        class Child(BaseModel):
+            value: Annotated[int, SendTo("values")]
+
+        class Parent(BaseModel):
+            child: Child
+            total: int = 0
+
+            def post_total(self, collector=Collector("values")):
+                vals = collector.values()
+                return sum(vals) if vals else 0
+
+        parent = Parent(child=Child(value=42))
+        result = await Resolver().resolve(parent)
+
+        assert result.total == 42
+
+    async def test_self_referencing_type(self):
+        """Self-referencing types should handle cycles gracefully."""
+
+        class TreeNode(BaseModel):
+            name: str
+            display_name: str = ""
+            children: list[TreeNode] = []
+
+            def post_display_name(self):
+                return f"Node({self.name})"
+
+        TreeNode.model_rebuild()
+
+        tree = TreeNode(
+            name="root",
+            children=[
+                TreeNode(name="child1", children=[]),
+                TreeNode(name="child2", children=[]),
+            ],
+        )
+        result = await Resolver().resolve(tree)
+
+        assert result.display_name == "Node(root)"
+        assert result.children[0].display_name == "Node(child1)"
+        assert result.children[1].display_name == "Node(child2)"
+
+    async def test_deep_hierarchy_traverses_to_leaf(self):
+        """Multiple levels of passthrough nodes should still reach leaves with methods."""
+
+        class DeepLeaf(BaseModel):
+            value: int
+            doubled: int = 0
+
+            def post_doubled(self):
+                return self.value * 2
+
+        class Level3(BaseModel):
+            data: str
+            leaf: DeepLeaf
+
+        class Level2(BaseModel):
+            child: Level3
+
+        class Level1(BaseModel):
+            child: Level2
+
+        root = Level1(child=Level2(child=Level3(data="d3", leaf=DeepLeaf(value=5))))
+        result = await Resolver().resolve(root)
+
+        assert result.child.child.leaf.doubled == 10
+
+    async def test_cache_consistency_across_invocations(self):
+        """should_traverse cache should be consistent across resolve() calls."""
+
+        class Simple(BaseModel):
+            name: str
+            greeting: str = ""
+
+            def resolve_greeting(self):
+                return f"Hi, {self.name}"
+
+        result1 = await Resolver().resolve(Simple(name="A"))
+        assert result1.greeting == "Hi, A"
+
+        result2 = await Resolver().resolve(Simple(name="B"))
+        assert result2.greeting == "Hi, B"
+
+    async def test_pure_data_node_is_skipped(self):
+        """A child with no methods and no descendants with methods should not be traversed."""
+
+        class PureData(BaseModel):
+            name: str
+
+        class Root(BaseModel):
+            data: PureData
+            greeting: str = ""
+
+            def resolve_greeting(self):
+                return "hello"
+
+        root = Root(data=PureData(name="test"))
+        result = await Resolver().resolve(root)
+
+        assert result.greeting == "hello"
+        assert result.data.name == "test"
+
+    async def test_list_of_pure_data_nodes_is_skipped(self):
+        """A list of children with no methods should not be traversed."""
+
+        class PureItem(BaseModel):
+            name: str
+
+        class Root(BaseModel):
+            items: list[PureItem] = []
+            count: int = 0
+
+            def post_count(self):
+                return 42
+
+        root = Root(items=[PureItem(name="A"), PureItem(name="B")])
+        result = await Resolver().resolve(root)
+
+        assert result.count == 42
+        assert len(result.items) == 2
+
+    async def test_descendant_with_resolve_triggers_traversal(self):
+        """Intermediate node should be traversed if descendant has resolve_* (not just post_*)."""
+
+        class Leaf(BaseModel):
+            source_id: int
+            source_name: str = ""
+
+            def resolve_source_name(self):
+                return f"source_{self.source_id}"
+
+        class Middle(BaseModel):
+            leaf: Leaf
+
+        class Root(BaseModel):
+            middle: Middle
+
+        root = Root(middle=Middle(leaf=Leaf(source_id=5)))
+        result = await Resolver().resolve(root)
+
+        assert result.middle.leaf.source_name == "source_5"
