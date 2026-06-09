@@ -433,7 +433,7 @@ class ErManager:
 
         Searches all registered entities for a relationship with the given name.
         Returns the first match, or None if not found.
-        Logs a warning if multiple entities have the same relationship name.
+        Raises ValueError if multiple entities have the same relationship name.
 
         Used by Resolver for Core API mode Loader() parameter injection.
         Prefer get_loader_for_entity() when the source entity is known.
@@ -449,11 +449,10 @@ class ErManager:
 
         if len(matches) > 1:
             entity_names = [e.__name__ for e, _ in matches]
-            logger.warning(
-                "Ambiguous loader lookup: relationship '%s' found on %s. "
-                "Returning first match (%s). Use Loader() with a DefineSubset "
-                "DTO or get_loader_for_entity() for precision.",
-                name, entity_names, entity_names[0],
+            raise ValueError(
+                f"Ambiguous loader lookup: relationship '{name}' found on "
+                f"{entity_names}. Use a DefineSubset DTO or "
+                f"get_loader_for_entity() for precision."
             )
 
         _, rel_info = matches[0]
