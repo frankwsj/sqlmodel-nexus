@@ -506,3 +506,235 @@ class TestQueryExecutorSplitMode:
         assert not isinstance(instance, dict)
         meta_fields = set(instance._query_meta["fields"])
         assert meta_fields == {"id", "name"}
+
+
+# ──────────────────────────────────────────────────────────
+# Additional coverage tests
+# ──────────────────────────────────────────────────────────
+
+
+class TestBuildFieldJobsEdgeCases:
+    def test_empty_sub_fields_returns_no_jobs(self):
+        """child_sel with empty sub_fields should produce no jobs."""
+        executor = _make_executor()
+        rel_info = executor._registry.get_relationship(FixtureTask, "owner")
+        assert rel_info is not None
+
+        # FieldSelection with no sub_fields (only scalar selected)
+        child_sel = FieldSelection(name="owner")
+        jobs = executor._build_field_jobs(
+            [FixtureTask(id=1, title="T", sprint_id=1, owner_id=1)],
+            FixtureTask,
+            FieldSelection(name="root", sub_fields={"owner": child_sel}),
+        )
+        assert jobs == []
+
+    def test_all_none_fk_values_returns_no_jobs(self):
+        """Parents with all-None FK values should produce no jobs."""
+        executor = _make_executor()
+        # FixtureTask with owner_id=None (FK not set)
+        task = FixtureTask(id=99, title="orphan", sprint_id=1, owner_id=None)
+        jobs = executor._build_field_jobs(
+            [task],
+            FixtureTask,
+            FieldSelection(name="root", sub_fields={
+                "owner": FieldSelection(name="owner", sub_fields={"id": FieldSelection(name="id")}),
+            }),
+        )
+        assert jobs == []
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_resolve_result_with_none(self):
+        """_resolve_result should handle None result gracefully."""
+        executor = _make_executor()
+        # Should not raise
+        await executor._resolve_result(None, FixtureUser, FieldSelection(name="root"))
+
+    def test_pagination_items_without_sub_fields_produces_job_with_empty_sel(self):
+        """Paginated field with only pagination selected still produces a job
+        because child_sel.sub_fields is non-empty (has 'pagination')."""
+        executor = _make_executor(enable_pagination=True)
+        child_sel = FieldSelection(
+            name="tasks",
+            sub_fields={
+                "pagination": FieldSelection(name="pagination"),
+            },
+        )
+        jobs = executor._build_field_jobs(
+            [FixtureSprint(id=1, name="S1")],
+            FixtureSprint,
+            FieldSelection(name="root", sub_fields={"tasks": child_sel}),
+        )
+        # A job is created because child_sel.sub_fields is non-empty
+        assert len(jobs) == 1
+
+
+class TestQueryExecutorPagination:
+    @pytest.mark.usefixtures("test_db")
+    async def test_paginated_query_e2e(self):
+        """End-to-end paginated query should return items + pagination metadata."""
+        executor = _make_executor(enable_pagination=True)
+        session_factory = get_test_session_factory()
+
+        class SprintQuery(SQLModel, table=False):
+            @query
+            async def get_all(cls):
+                async with session_factory() as session:
+                    return list((await session.exec(select(FixtureSprint))).all())
+
+        method = _get_bound_method(SprintQuery, "get_all")
+        query_methods = {"sprints": (FixtureSprint, method)}
+        gql = "{ sprints { id name tasks { items { id title } pagination { total_count has_more } } } }"
+        parsed = QueryParser().parse(gql)
+
+        result = await executor.execute_query(
+            gql, None, None, parsed, query_methods, {},
+            [FixtureTask, FixtureUser, FixtureSprint],
+        )
+
+        sprints = result["data"]["sprints"]
+        assert len(sprints) == 2
+        for sprint in sprints:
+            page = sprint["tasks"]
+            assert "items" in page
+            assert len(page["items"]) == 2
+            assert "pagination" in page
+            assert page["pagination"]["total_count"] == 2
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_paginated_query_respects_limit(self):
+        """limit argument should be propagated to paginated loader."""
+        executor = _make_executor(enable_pagination=True)
+        session_factory = get_test_session_factory()
+
+        class SprintQuery(SQLModel, table=False):
+            @query
+            async def get_all(cls):
+                async with session_factory() as session:
+                    return list((await session.exec(select(FixtureSprint))).all())
+
+        method = _get_bound_method(SprintQuery, "get_all")
+        query_methods = {"sprints": (FixtureSprint, method)}
+        gql = "{ sprints { id name tasks(limit: 1) { items { id title } pagination { total_count has_more } } } }"
+        parsed = QueryParser().parse(gql)
+
+        result = await executor.execute_query(
+            gql, None, None, parsed, query_methods, {},
+            [FixtureTask, FixtureUser, FixtureSprint],
+        )
+
+        sprints = result["data"]["sprints"]
+        for sprint in sprints:
+            page = sprint["tasks"]
+            assert len(page["items"]) == 1
+            assert page["pagination"]["total_count"] == 2
+            # end = offset(0) + 1 + 1 = 2, total = 2 → has_more = 2 > 2 = False
+            assert page["pagination"]["has_more"] is False
+
+
+class TestQueryExecutorSerializationExtras:
+    def test_serialize_without_field_sel_uses_model_dump(self):
+        """_serialize with no sub_fields should fall back to model_dump."""
+        executor = _make_executor()
+        user = FixtureUser(id=1, name="Alice", email="alice@test.com")
+        result = executor._serialize(user, FixtureUser, None)
+        assert isinstance(result, dict)
+        assert result["id"] == 1
+
+    def test_serialize_none_result(self):
+        """_serialize with None result should return None."""
+        executor = _make_executor()
+        assert executor._serialize(None, FixtureUser, None) is None
+
+    def test_serialize_list_result(self):
+        """_serialize with list result should return list of dicts."""
+        executor = _make_executor()
+        users = [
+            FixtureUser(id=1, name="Alice", email="a@t.com"),
+            FixtureUser(id=2, name="Bob", email="b@t.com"),
+        ]
+        result = executor._serialize(users, FixtureUser, None)
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    def test_serialize_entity_returns_none_for_none(self):
+        """_serialize_entity should return None for None input."""
+        executor = _make_executor()
+        assert executor._serialize_entity(None, FixtureUser, None) is None
+
+    def test_serialize_entity_passes_through_dict(self):
+        """_serialize_entity should pass through dict values."""
+        executor = _make_executor()
+        assert executor._serialize_entity({"id": 1}, FixtureUser, None) == {"id": 1}
+
+    def test_serialize_relationship_value_none(self):
+        """_serialize_relationship_value should return None for None value."""
+        executor = _make_executor()
+        rel_info = RelationshipInfo(
+            name="owner", direction="MANYTOONE", fk_field="owner_id",
+            target_entity=FixtureUser, is_list=False, loader=object,
+        )
+        assert executor._serialize_relationship_value(
+            None, rel_info, FieldSelection(name="owner")
+        ) is None
+
+    def test_get_fk_fields(self):
+        """_get_fk_fields should return FK field names."""
+        executor = _make_executor()
+        fk_fields = executor._get_fk_fields(FixtureTask)
+        assert "sprint_id" in fk_fields
+        assert "owner_id" in fk_fields
+
+    def test_get_relationship_names(self):
+        """_get_relationship_names should return relationship field names."""
+        executor = _make_executor()
+        rel_names = executor._get_relationship_names(FixtureTask)
+        assert "sprint" in rel_names
+        assert "owner" in rel_names
+
+    def test_paginated_serialization_with_pydantic_pagination(self):
+        """Pagination as Pydantic model should be serialized via model_dump."""
+        from nexusx.loader.pagination import Pagination
+
+        executor = _make_executor(enable_pagination=True)
+        rel_info = RelationshipInfo(
+            name="tasks", direction="ONETOMANY", fk_field="sprint_id",
+            target_entity=FixtureTask, is_list=True, loader=object,
+        )
+        child_sel = QueryParser().parse(
+            "{ posts { pagination { total_count has_more } } }"
+        )["posts"]
+
+        result = executor._serialize_relationship_value(
+            value={
+                "items": [],
+                "pagination": Pagination(has_more=False, total_count=5),
+            },
+            rel_info=rel_info,
+            child_sel=child_sel,
+        )
+        assert result["pagination"]["total_count"] == 5
+        assert result["pagination"]["has_more"] is False
+
+    def test_paginated_serialization_all_pagination_fields(self):
+        """Pagination with no sub-field filter should return all fields."""
+        executor = _make_executor(enable_pagination=True)
+        rel_info = RelationshipInfo(
+            name="tasks", direction="ONETOMANY", fk_field="sprint_id",
+            target_entity=FixtureTask, is_list=True, loader=object,
+        )
+        # pagination selected but no sub_fields → return all pagination fields
+        child_sel = FieldSelection(
+            name="tasks",
+            sub_fields={"pagination": FieldSelection(name="pagination")},
+        )
+
+        result = executor._serialize_relationship_value(
+            value={
+                "items": [],
+                "pagination": {"total_count": 3, "has_more": True},
+            },
+            rel_info=rel_info,
+            child_sel=child_sel,
+        )
+        assert result["pagination"] == {"total_count": 3, "has_more": True}

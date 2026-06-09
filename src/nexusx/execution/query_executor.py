@@ -26,6 +26,7 @@ class _FieldJob:
     parent_entity: type[SQLModel]
     rel_info: RelationshipInfo
     child_sel: FieldSelection
+    original_sel: FieldSelection | None = None
 
 
 class QueryExecutor:
@@ -259,6 +260,7 @@ class QueryExecutor:
                     parent_entity=parent_entity,
                     rel_info=rel_info,
                     child_sel=effective_sel,
+                    original_sel=child_sel if effective_sel is not child_sel else None,
                 )
             )
         return jobs
@@ -335,10 +337,13 @@ class QueryExecutor:
         rel_info = job.rel_info
         child_sel = job.child_sel
 
-        # Extract page args from original field_sel (before items adjustment)
-        # The job.child_sel is already the items sub-selection;
-        # we need the original for pagination args.
-        page_args = self._extract_page_args(child_sel, rel_info)
+        # Extract page args from original field selection (before items adjustment).
+        # job.original_sel holds the original child_sel when it was replaced by
+        # items_sel; otherwise fall back to child_sel (no pagination adjustment).
+        page_args = self._extract_page_args(
+            job.original_sel if job.original_sel is not None else child_sel,
+            rel_info,
+        )
 
         target_rels = self._registry.get_relationships(rel_info.target_entity)
         fk_lookup = {name: info.fk_field for name, info in target_rels.items()}
