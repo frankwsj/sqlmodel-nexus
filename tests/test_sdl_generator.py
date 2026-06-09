@@ -445,3 +445,112 @@ class TestSDLGeneratorOperationSDL:
         assert sdl is not None
         assert "ArticleForTest" in sdl
         assert "AuthorForTest" in sdl
+
+
+# ──────────────────────────────────────────────────────────
+# Additional coverage tests
+# ──────────────────────────────────────────────────────────
+
+
+class TestSDLGeneratorExtras:
+    def test_empty_list_type_converts_to_string(self):
+        """list without type args falls through to String! (non-list branch)."""
+        converter = TypeConverter({"EntityForHelperTest"})
+        result = _python_type_to_graphql(list, converter)
+        # list (bare) has no origin match for list, so it falls through
+        assert result == "String!"
+
+    def test_pagination_types_generated(self):
+        """enable_pagination=True should produce Pagination and Result types."""
+        from tests.conftest import FixtureSprint, FixtureTask, FixtureUser
+        from nexusx.loader.registry import ErManager
+
+        registry = ErManager(
+            entities=[FixtureSprint, FixtureTask, FixtureUser],
+            session_factory=lambda: None,
+            enable_pagination=True,
+        )
+        generator = SDLGenerator([FixtureSprint, FixtureTask, FixtureUser])
+        sdl = generator.generate(enable_pagination=True, loader_registry=registry)
+
+        assert "type Pagination" in sdl
+        assert "has_more: Boolean!" in sdl
+        assert "total_count: Int" in sdl
+        assert "FixtureTaskResult" in sdl
+
+    def test_no_pagination_types_when_disabled(self):
+        """Without enable_pagination, no Pagination type should appear."""
+        generator = SDLGenerator([UserForTest])
+        sdl = generator.generate()
+        assert "type Pagination" not in sdl
+
+    def test_generate_input_type_skips_underscore_fields(self):
+        """Fields starting with _ should be excluded from input types."""
+
+        class UnderscoreEntity(SQLModel):
+            _private: str = ""
+            id: int | None
+            name: str
+
+        generator = SDLGenerator([UnderscoreEntity])
+        # _generate_input_type is called internally
+        sdl = generator.generate()
+        # The entity type should not include _private
+        assert "_private" not in sdl
+
+    def test_generate_with_no_query_methods(self):
+        """Entity without @query/@mutation should produce only type definition."""
+
+        class SimpleEntity(SQLModel):
+            id: int | None
+            value: str
+
+        generator = SDLGenerator([SimpleEntity])
+        sdl = generator.generate()
+        assert "type SimpleEntity" in sdl
+        assert "type Query" not in sdl
+
+    def test_method_default_params_are_optional(self):
+        """Method params with defaults should be optional (no !) in SDL."""
+
+        class DefaultParamEntity(SQLModel):
+            id: int | None
+
+            @query
+            async def search(cls, limit: int = 10, offset: int = 0) -> list["DefaultParamEntity"]:
+                return []
+
+        generator = SDLGenerator([DefaultParamEntity])
+        sdl = generator.generate()
+        # Optional params should not have !
+        assert "limit: Int" in sdl
+        assert "offset: Int" in sdl
+        # Should not have limit: Int!
+        assert "limit: Int!" not in sdl
+
+    def test_generate_operation_sdl_with_missing_return_type(self):
+        """Method with unresolvable return type should still generate SDL."""
+
+        class NoReturnEntity(SQLModel):
+            id: int | None
+
+            @query
+            def get_all(cls):
+                return []
+
+        generator = SDLGenerator([NoReturnEntity])
+        sdl = generator.generate_operation_sdl("noReturnEntityGetAll", "Query")
+        assert sdl is not None
+        assert "noReturnEntityGetAll" in sdl
+
+    def test_collect_related_entities_unreachable(self):
+        """Type hint referencing non-entity should not crash."""
+
+        class IsolatedEntity(SQLModel):
+            id: int | None
+            name: str
+
+        generator = SDLGenerator([IsolatedEntity])
+        # generate_operation_sdl internally calls _collect_related_entities
+        sdl = generator.generate_operation_sdl("nonExistent", "Query")
+        assert sdl is None
