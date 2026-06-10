@@ -1,14 +1,14 @@
 """CLI generator for UseCaseService via Typer.
 
-Provides ``create_cli()`` to create a Typer app that exposes UseCaseService
-methods as CLI commands. Each service becomes a command group, each method
-a command within that group.
+Provides ``create_use_case_cli()`` to create a Typer app that exposes
+UseCaseService methods as CLI commands. Each service becomes a command
+group, each method a command within that group.
 
 Usage::
 
-    from nexusx import UseCaseAppConfig, create_cli
+    from nexusx import UseCaseAppConfig, create_use_case_cli
 
-    cli = create_cli(UseCaseAppConfig(
+    cli = create_use_case_cli(UseCaseAppConfig(
         name="project",
         services=[UserService, TaskService],
     ))
@@ -105,7 +105,7 @@ def _build_command(
     return _command
 
 
-def create_cli(
+def create_use_case_cli(
     config: UseCaseAppConfig,
     app_name: str | None = None,
 ) -> typer.Typer:
@@ -123,7 +123,7 @@ def create_cli(
 
     Example::
 
-        cli = create_cli(UseCaseAppConfig(
+        cli = create_use_case_cli(UseCaseAppConfig(
             name="project",
             services=[UserService, TaskService],
         ))

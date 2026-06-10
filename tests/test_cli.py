@@ -1,4 +1,4 @@
-"""Tests for create_cli — Typer CLI generator for UseCaseService."""
+"""Tests for create_use_case_cli — Typer CLI generator for UseCaseService."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from nexusx.decorator import mutation, query
 from nexusx.use_case.business import UseCaseService
-from nexusx.use_case.cli import create_cli
+from nexusx.use_case.cli import create_use_case_cli
 from nexusx.use_case.context import FromContext
 from nexusx.use_case.types import UseCaseAppConfig
 
@@ -85,19 +85,19 @@ class ContextService(UseCaseService):
 
 @pytest.fixture
 def basic_cli():
-    return create_cli(UseCaseAppConfig(name="test", services=[UserService, PingService]))
+    return create_use_case_cli(UseCaseAppConfig(name="test", services=[UserService, PingService]))
 
 
 @pytest.fixture
 def no_mutation_cli():
-    return create_cli(
+    return create_use_case_cli(
         UseCaseAppConfig(name="test", services=[UserService], enable_mutation=False),
     )
 
 
 @pytest.fixture
 def context_cli():
-    return create_cli(UseCaseAppConfig(name="test", services=[ContextService]))
+    return create_use_case_cli(UseCaseAppConfig(name="test", services=[ContextService]))
 
 
 # ──────────────────────────────────────────────────
@@ -211,11 +211,11 @@ class TestCLIStructure:
     def test_returns_typer_app(self):
         import typer
 
-        cli = create_cli(UseCaseAppConfig(name="test", services=[UserService]))
+        cli = create_use_case_cli(UseCaseAppConfig(name="test", services=[UserService]))
         assert isinstance(cli, typer.Typer)
 
     def test_custom_app_name(self):
-        cli = create_cli(
+        cli = create_use_case_cli(
             UseCaseAppConfig(name="test", services=[UserService]),
             app_name="myapp",
         )
@@ -229,4 +229,4 @@ class TestCLIStructure:
 
     def test_invalid_config_type(self):
         with pytest.raises(TypeError):
-            create_cli("not a config")
+            create_use_case_cli("not a config")

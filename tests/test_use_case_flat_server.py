@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from nexusx.decorator import mutation, query
 from nexusx.use_case.business import UseCaseService
-from nexusx.use_case.flat_server import create_flat_mcp_server
+from nexusx.use_case.flat_server import create_use_case_flat_server
 from nexusx.use_case.types import UseCaseAppConfig
 
 # ──────────────────────────────────────────────────
@@ -87,7 +87,7 @@ def _make_flat_server(enable_mutation: bool = True) -> object:
         services=[UserService, TaskService],
         enable_mutation=enable_mutation,
     )
-    return create_flat_mcp_server(apps=[config], name="Test Flat API")
+    return create_use_case_flat_server(apps=[config], name="Test Flat API")
 
 
 # ──────────────────────────────────────────────────
@@ -300,4 +300,4 @@ class TestFlatServerValidation:
     def test_empty_apps_raises(self):
         """Empty apps list raises ValueError."""
         with pytest.raises(ValueError, match="empty"):
-            create_flat_mcp_server(apps=[])
+            create_use_case_flat_server(apps=[])
