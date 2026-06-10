@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.9.0
+
+### Bug Fix: 自定义关系在全局分页下无法查询
+
+`enable_pagination=True` 时，自定义关系（`direction="CUSTOM"`）因缺少 `page_loader` 被 `_validate_pagination` 拦截并报错。自定义关系使用用户提供的 loader callable，无法像 ORM 关系那样在 SQL 层做分页。
+
+**Changes：**
+- `src/nexusx/loader/registry.py`: `_validate_pagination` 跳过 CUSTOM 方向的关系，使其在全局分页下用普通 loader 正常查询（不分页）
+- 新增 E2E 测试验证 `enable_pagination=True` 时自定义关系通过普通 loader 返回完整结果
+
+### Refactoring: 公共 API 精简
+
+精简顶层导出，移除内部实现细节和命名不规范的符号。
+
+**移除的导出（内部路径不变）：**
+
+| 符号 | 内部路径 |
+|------|---------|
+| `SDLGenerator` | `nexusx.sdl_generator.SDLGenerator` |
+| `QueryParser` | `nexusx.query_parser.QueryParser` |
+| `FieldSelection` | `nexusx.query_parser.FieldSelection` |
+| `get_return_type` | `nexusx.use_case.business.get_return_type` |
+
+**重命名：**
+
+| 旧名 | 新名 |
+|------|------|
+| `create_cli` | `create_use_case_cli` |
+| `create_flat_mcp_server` | `create_use_case_flat_server` |
+
+**Changes：**
+- `src/nexusx/__init__.py`: 移除 `SDLGenerator`、`QueryParser`、`FieldSelection`、`get_return_type` 导入和 `__all__` 条目；导入改为新名称
+- `src/nexusx/use_case/cli.py`: `create_cli` → `create_use_case_cli`
+- `src/nexusx/use_case/flat_server.py`: `create_flat_mcp_server` → `create_use_case_flat_server`
+- `demo/`、`tests/`、`skill/` 同步更新
+
 ## 2.8.0
 
 ### Bug Fix: 分页 limit 参数未传递到 QueryExecutor
