@@ -458,7 +458,27 @@ class SubsetMeta(type):
                 f"Class {name} must define {SUBSET_DEFINITION} = (Entity, fields)"
             )
 
-        # ── Resolve subset_info into (entity_kls, subset_fields) ──
+        entity_kls, subset_fields, auto_excluded = cls._resolve_subset_info(subset_info)
+        field_definitions, extra_fields, override_annotations = cls._build_field_definitions(
+            entity_kls, subset_fields, namespace, auto_excluded, subset_info,
+        )
+        global_ns = cls._build_global_ns(namespace)
+        local_ns = cls._build_local_ns(global_ns)
+        cls._merge_overrides(field_definitions, override_annotations, global_ns, namespace)
+        if isinstance(subset_info, SubsetConfig):
+            cls._merge_config_overrides(field_definitions, subset_info, local_ns, namespace)
+
+        _validate_extra_field_types(extra_fields, entity_kls, global_ns, namespace)
+
+        return cls._create_subset_class(
+            name, field_definitions, subset_fields, entity_kls, namespace,
+        )
+
+    @staticmethod
+    def _resolve_subset_info(
+        subset_info: Any,
+    ) -> tuple[type[SQLModel], list[str], set[str]]:
+        """Parse __subset__ into (entity_kls, subset_fields, auto_excluded_pk)."""
         if isinstance(subset_info, SubsetConfig):
             entity_kls = subset_info.kls
             if subset_info.fields is not None:
@@ -484,12 +504,10 @@ class SubsetMeta(type):
             )
 
         _validate_subset_fields(subset_fields)
-
-        # Ensure subset_fields is mutable (tuple syntax yields a tuple)
         subset_fields = list(subset_fields)
 
         # Auto-include PK fields for DataLoader key resolution (ONETOMANY loading).
-        _auto_excluded_fields: set[str] = set()
+        auto_excluded: set[str] = set()
         existing_set = set(subset_fields)
         user_omit: set[str] = set()
         if isinstance(subset_info, SubsetConfig) and subset_info.omit_fields:
@@ -501,27 +519,33 @@ class SubsetMeta(type):
                 subset_fields.append(pk)
                 existing_set.add(pk)
                 if pk in user_omit:
-                    _auto_excluded_fields.add(pk)
+                    auto_excluded.add(pk)
 
-        # Extract fields from entity
+        return entity_kls, subset_fields, auto_excluded
+
+    @staticmethod
+    def _build_field_definitions(
+        entity_kls: type[SQLModel],
+        subset_fields: list[str],
+        namespace: dict,
+        auto_excluded: set[str],
+        subset_info: Any,
+    ) -> tuple[dict[str, tuple[Any, Any]], dict[str, tuple[Any, Any]], dict[str, Any]]:
+        """Extract and merge field definitions from entity + class body.
+
+        Returns (field_definitions, extra_fields, override_annotations).
+        """
         field_infos = _extract_field_infos(entity_kls, subset_fields)
-
-        # Extract extra fields and override annotations from class body
         extra_fields, override_annotations = _extract_extra_fields(
-            namespace, set(subset_fields)
+            namespace, set(subset_fields),
         )
 
-        # Extract resolve_* and post_* methods
-        methods = _extract_methods(namespace)
-
-        # Build field definitions for create_model
         field_definitions: dict[str, tuple[Any, Any]] = {}
         field_definitions.update(field_infos)
         field_definitions.update(extra_fields)
 
-        # Hide auto-included PK fields from serialization when user explicitly
-        # omitted them via omit_fields. They remain available internally for DataLoader.
-        for field_name in _auto_excluded_fields:
+        # Hide auto-included PK fields from serialization
+        for field_name in auto_excluded:
             if field_name in field_definitions:
                 _anno, fi = field_definitions[field_name]
                 if isinstance(fi, FieldInfo):
@@ -529,12 +553,14 @@ class SubsetMeta(type):
                     new_fi.exclude = True
                     field_definitions[field_name] = (_anno, new_fi)
 
-        # Apply SubsetConfig modifiers (excluded_fields, expose_as, send_to)
-        # Applied after merge so it can reference both subset and extra fields
         if isinstance(subset_info, SubsetConfig):
             _apply_config_modifiers(subset_info, field_definitions)
 
-        # Resolve string annotations (from __future__ import annotations)
+        return field_definitions, extra_fields, override_annotations
+
+    @staticmethod
+    def _build_global_ns(namespace: dict) -> dict[str, Any]:
+        """Build the namespace for resolving string annotations."""
         import sys as _sys
         from typing import Annotated as _Annotated
 
@@ -542,74 +568,94 @@ class SubsetMeta(type):
         from nexusx.context import SendTo as _SendTo
 
         _module = _sys.modules.get(namespace.get("__module__", ""), None)
-        _global_ns = {
+        return {
             **(vars(_module) if _module else {}),
             "Annotated": _Annotated,
             "ExposeAs": _ExposeAs,
             "SendTo": _SendTo,
         }
 
-        # Merge override annotations (ExposeAs, SendTo) from class body
+    @staticmethod
+    def _build_local_ns(global_ns: dict[str, Any]) -> dict[str, Any]:
+        """Build an eval namespace including the caller's locals (for nested class defs).
+
+        Called from __new__, so _getframe(2) reaches the class definition site.
+        """
+        import sys as _sys
+
+        _frame = _sys._getframe(2)
+        return {**global_ns, **_frame.f_locals}
+
+    @staticmethod
+    def _merge_overrides(
+        field_definitions: dict[str, tuple[Any, Any]],
+        override_annotations: dict[str, Any],
+        global_ns: dict[str, Any],
+        namespace: dict[str, Any],
+    ) -> None:
+        """Merge ExposeAs/SendTo override annotations from class body in-place."""
         for fname, anno in override_annotations.items():
-            if fname in field_definitions:
-                existing_anno, existing_fi = field_definitions[fname]
-                # Resolve string annotations from __future__ import annotations
-                resolved = anno
-                if isinstance(resolved, str):
-                    try:
-                        resolved = eval(resolved, _global_ns, namespace)  # noqa: S307
-                    except NameError:
-                        continue
-                # Update both the annotation and FieldInfo metadata
-                # so create_model() preserves the Annotated type
-                if hasattr(resolved, "__metadata__"):
-                    for meta in resolved.__metadata__:
-                        existing_fi.metadata.append(meta)
-                    field_definitions[fname] = (resolved, existing_fi)
-
-        # Merge SubsetConfig expose_as/send_to overrides
-        # These generate synthetic Annotated types that wrap the existing field type
-        if isinstance(subset_info, SubsetConfig):
-            config_overrides = _build_config_overrides(subset_info)
-            # Build an eval namespace that includes the caller's locals
-            # (classes may be defined inside functions where types aren't in module globals)
-            _frame = _sys._getframe(1)
-            _local_ns = {**_global_ns, **_frame.f_locals}
-            for fname, synthetic_anno in config_overrides.items():
-                if fname not in field_definitions:
+            if fname not in field_definitions:
+                continue
+            existing_anno, existing_fi = field_definitions[fname]
+            resolved = anno
+            if isinstance(resolved, str):
+                try:
+                    resolved = eval(resolved, global_ns, namespace)  # noqa: S307
+                except NameError:
                     continue
-                existing_anno, existing_fi = field_definitions[fname]
-
-                # Resolve the existing annotation (may be a string from __future__ annotations)
-                resolved_anno = existing_anno
-                if isinstance(resolved_anno, str):
-                    try:
-                        resolved_anno = eval(resolved_anno, _local_ns, namespace)  # noqa: S307
-                    except NameError:
-                        continue
-
-                # Extra fields may have raw default values instead of FieldInfo
-                if not isinstance(existing_fi, FieldInfo):
-                    existing_fi = FieldInfo(default=existing_fi)
-
-                # Build Annotated[resolved_anno, *metadata] preserving the real type
-                config_metadata = synthetic_anno.__metadata__
-                for meta in config_metadata:
+            if hasattr(resolved, "__metadata__"):
+                for meta in resolved.__metadata__:
                     existing_fi.metadata.append(meta)
-                wrapped = _Annotated[(resolved_anno, *config_metadata)]
-                field_definitions[fname] = (wrapped, existing_fi)
+                field_definitions[fname] = (resolved, existing_fi)
 
-        # Validate: relationship extra fields must not use raw SQLModel types
-        _validate_extra_field_types(
-            extra_fields, entity_kls, _global_ns, namespace
-        )
+    @staticmethod
+    def _merge_config_overrides(
+        field_definitions: dict[str, tuple[Any, Any]],
+        subset_info: SubsetConfig,
+        local_ns: dict[str, Any],
+        namespace: dict[str, Any],
+    ) -> None:
+        """Merge SubsetConfig expose_as/send_to overrides in-place."""
+        from typing import Annotated
 
-        # Create the Pydantic model
+        config_overrides = _build_config_overrides(subset_info)
+
+        for fname, synthetic_anno in config_overrides.items():
+            if fname not in field_definitions:
+                continue
+            existing_anno, existing_fi = field_definitions[fname]
+
+            resolved_anno = existing_anno
+            if isinstance(resolved_anno, str):
+                try:
+                    resolved_anno = eval(resolved_anno, local_ns, namespace)  # noqa: S307
+                except NameError:
+                    continue
+
+            if not isinstance(existing_fi, FieldInfo):
+                existing_fi = FieldInfo(default=existing_fi)
+
+            config_metadata = synthetic_anno.__metadata__
+            for meta in config_metadata:
+                existing_fi.metadata.append(meta)
+            wrapped = Annotated[(resolved_anno, *config_metadata)]
+            field_definitions[fname] = (wrapped, existing_fi)
+
+    @staticmethod
+    def _create_subset_class(
+        name: str,
+        field_definitions: dict[str, tuple[Any, Any]],
+        subset_fields: list[str],
+        entity_kls: type[SQLModel],
+        namespace: dict,
+    ) -> Any:
+        """Create the Pydantic model, attach methods and metadata."""
+        methods = _extract_methods(namespace)
+
         create_model_kwargs: dict[str, Any] = {
             "__module__": namespace.get("__module__", __name__),
         }
-
-        # Preserve model_config from entity if applicable
         config = getattr(entity_kls, "model_config", None)
         if config:
             create_model_kwargs["__config__"] = config
@@ -620,15 +666,11 @@ class SubsetMeta(type):
             **create_model_kwargs,
         )
 
-        # Attach methods
         for method_name, method in methods.items():
             setattr(subset_class, method_name, method)
 
-        # Store reference to source entity
         setattr(subset_class, SUBSET_REFERENCE, entity_kls)
         _subset_registry[subset_class] = entity_kls
-
-        # Store subset field names for implicit auto-load ORM→DTO conversion
         subset_class.__subset_fields__ = list(subset_fields)
 
         return subset_class
