@@ -48,14 +48,14 @@ mcp = create_mcp_server(
 )
 mcp_http = mcp.http_app(path="/", transport="streamable-http", stateless_http=True)
 
+use_case_config = UseCaseAppConfig(
+    name="template",
+    services=[TaskService, SprintService],
+    description="Task & Sprint business services",
+)
+
 use_case_mcp = create_use_case_mcp_server(
-    apps=[
-        UseCaseAppConfig(
-            name="template",
-            services=[TaskService, SprintService],
-            description="Task & Sprint business services",
-        ),
-    ],
+    apps=[use_case_config],
     name="Template UseCase MCP",
 )
 use_case_mcp_http = use_case_mcp.http_app(
@@ -96,7 +96,7 @@ app.add_middleware(
 from nexusx import create_use_case_voyager  # noqa: E402
 
 voyager_app = create_use_case_voyager(
-    services=[],  # Phase 3: add UseCaseService classes here
+    services=[TaskService, SprintService],
     er_manager=er,
     name="Template API",
 )
@@ -133,9 +133,9 @@ async def graphql_schema():
 
 # ── REST router (Phase 3) ────────────────────────────────────────────
 
-from src.router import api as api_router  # noqa: E402
+from nexusx import create_use_case_router  # noqa: E402
 
-app.include_router(api_router.route)
+app.include_router(create_use_case_router(use_case_config))
 
 
 # ── MCP mounts ───────────────────────────────────────────────────────

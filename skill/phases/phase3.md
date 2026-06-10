@@ -10,6 +10,7 @@
 
 **关键模式**:
 - `DefineSubset` + `SubsetConfig` 定义响应 DTO（字段选择、FK 隐藏）
+- `AutoLoad` 标记 DTO 关系字段为自动加载（配合 Resolver implicit auto-load 使用，显式声明自动加载意图）
 - `ErManager` + `Resolver` 自动加载关系（implicit auto-load）
 - `UseCaseService` 统一业务逻辑入口（同时服务 MCP 和 FastAPI）
 - `@query` / `@mutation` 装饰器标记服务方法
@@ -18,7 +19,8 @@
   - **query 方法（list）**：调用 methods.py 拿 `list[Model]` → `[DtoType.model_validate(m) for m in models]` → `Resolver().resolve(dtos)`
   - **query 方法（get 单条）**：调用 methods.py 拿 `Model | None` → `DtoType.model_validate(entity)` → `Resolver().resolve(dto)`
   - **mutation 方法**：同 get 单条模式，调用 methods.py 获取 Model 后转换
-  - **service.py 不直接操作数据库**（无 `build_dto_select`、`async_session`）
+  - **service.py 不直接操作数据库**（无 `async_session`）。如需直接查询构建 DTO，使用 `build_dto_select(entity, dto_type)` 生成 SQL SELECT 并通过 `dict(row._mapping)` 构造 DTO
+- **`build_dto_select(Entity, DtoType)` 查询构建** — 根据 DTO 的 `__subset__` 字段自动生成 SQL SELECT 语句，只查询 DTO 需要的列，避免 `SELECT *`
 - **`create_use_case_router()` 自动生成 REST 路由** — 从 UseCaseAppConfig 生成 POST 路由，自动提取 `response_model`、构建 request body model、注册路由。不需要手写 `router/` 目录
   ```python
   from nexusx import UseCaseAppConfig, create_use_case_router
@@ -29,6 +31,17 @@
       ),
   )
   app.include_router(use_case_router)
+  ```
+- **`create_jsonrpc_router()` JSON-RPC 2.0 路由** — 替代 REST 路由的方案，方法命名为 `ServiceName.method_name`。适用于需要轻量 RPC 协议的场景
+  ```python
+  from nexusx import create_jsonrpc_router
+  app.include_router(create_jsonrpc_router(use_case_config))
+  ```
+- **`create_cli()` 生成 Typer CLI** — 将 UseCaseService 方法暴露为 CLI 命令，每个 service 成为一个命令组，每个方法成为子命令
+  ```python
+  from nexusx import create_cli
+  cli = create_cli(use_case_config)
+  cli()  # python -m myapp user-service list-users
   ```
 - `create_use_case_voyager()` 可视化服务结构
 - `create_use_case_mcp_server()` + `UseCaseAppConfig` 暴露给 AI agent（四层渐进式披露：list_apps → list_services → describe_service → call_use_case）
@@ -44,12 +57,12 @@
   | 类型定义 | describe_service 返回值 | MCP resource |
   | 适用场景 | 大型 API、多服务（>20 方法） | 小型 API、直接访问 |
   | prompt 支持 | `@mcp.prompt()` | `@mcp.prompt()` |
-- **main.py 典型模式 — 三种 API 并存**（GraphQL + REST + MCP）：
+- **main.py 典型模式 — 四种 API 并存**（GraphQL + REST + MCP + CLI/JSON-RPC）：
   ```python
   from nexusx import (
-      UseCaseAppConfig, create_use_case_router,
+      UseCaseAppConfig, create_use_case_router, create_jsonrpc_router,
       create_use_case_mcp_server, create_flat_mcp_server,
-      create_use_case_voyager, GraphQLHandler,
+      create_use_case_voyager, GraphQLHandler, create_cli,
   )
 
   app_config = UseCaseAppConfig(
@@ -59,6 +72,12 @@
 
   # REST（自动路由，OpenAPI spec）
   app.include_router(create_use_case_router(app_config))
+
+  # JSON-RPC（替代 REST 的轻量方案，二选一）
+  # app.include_router(create_jsonrpc_router(app_config))
+
+  # CLI（可选，生成 Typer CLI 命令行工具）
+  # cli = create_cli(app_config)
 
   # GraphQL（辅助开发测试）
   graphql_handler = GraphQLHandler(base=Base, session_factory=async_session)
@@ -107,5 +126,7 @@
 7. **fastmcp>=3.2.4 挂载到 FastAPI 需要 lifespan 合并** — `app.mount("/mcp", mcp.http_app(path="/"))` 会报 `Task group is not initialized`。必须：(1) 使用 `transport="streamable-http", stateless_http=True`；(2) 在 lifespan 函数定义之前创建 MCP http_app 对象；(3) 将 MCP http_app 的 lifespan 嵌套到 FastAPI lifespan 中（`async with mcp_http.lifespan(mcp_http):`）
 8. **Use `create_use_case_router()` 而非手写路由** — 手写路由无法声明 `response_model`，导致 OpenAPI spec 中响应类型为空（`unknown`），TS SDK 无法生成有效类型。`create_use_case_router()` 从 UseCaseService 方法的返回类型注解（如 `-> list[ChatSummary]`）自动提取 `response_model`，使 FastAPI 在 OpenAPI spec 中正确描述响应结构
 9. **UseCaseService 方法必须声明返回类型注解** — `create_use_case_router()` 通过 `get_type_hints(method).get("return")` 提取返回类型作为 `response_model`。缺少返回注解的方法，其响应类型在 OpenAPI spec 中为空
-10. **methods.py 返回 Model，service.py 负责 DTO 转换** — methods.py 是纯业务逻辑层，所有方法（query + mutation）返回 ORM Model 实体。service.py 统一调用 methods.py，DTO 转换在 service.py 中进行：(1) list 方法调 methods 拿 `list[Model]` → `[DtoType.model_validate(m) for m in models]` → `Resolver().resolve(dtos)`；(2) 单条 get 方法调 methods 拿 `Model | None` → `DtoType.model_validate(entity)` → `Resolver().resolve(dto)`；(3) mutation 方法同单条 get。service.py 不直接操作数据库（无 `build_dto_select`、`async_session`）
+10. **methods.py 返回 Model，service.py 负责 DTO 转换** — methods.py 是纯业务逻辑层，所有方法（query + mutation）返回 ORM Model 实体。service.py 统一调用 methods.py，DTO 转换在 service.py 中进行：(1) list 方法调 methods 拿 `list[Model]` → `[DtoType.model_validate(m) for m in models]` → `Resolver().resolve(dtos)`；(2) 单条 get 方法调 methods 拿 `Model | None` → `DtoType.model_validate(entity)` → `Resolver().resolve(dto)`；(3) mutation 方法同单条 get。service.py 不直接操作数据库
 11. **`create_flat_mcp_server()` 返回 FastMCP 实例，可直接添加 `@mcp.prompt()`** — 如果项目需要 MCP prompt 功能，flat server 和渐进式 server 都提供了方便的挂载点，两者返回的都是标准 FastMCP 对象
+12. **`create_jsonrpc_router()` 提供轻量 RPC 协议** — 方法命名为 `ServiceName.method_name`，适合不需要 REST 语义的场景。与 `create_use_case_router()` 二选一
+13. **`create_cli()` 生成 Typer CLI 命令行工具** — 每个 service 成为一个命令组，每个方法成为子命令。适合需要本地调试脚本的场景。需要额外依赖 `typer`
