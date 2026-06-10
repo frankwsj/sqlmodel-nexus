@@ -139,6 +139,11 @@ class _ClassMeta:
     should_traverse: bool | None = None
 
 
+# Type aliases for level processing
+_LevelMeta = tuple[_ClassMeta, dict[str, str], dict[str, str | tuple[str, ...]]]
+_LevelState = list[tuple[_WorkItem, _ClassMeta, dict[str, Any], dict[str, ICollector]]]
+
+
 def _analyze_method_params(
     method: Callable, *, include_collectors: bool = False,
 ) -> _MethodParamInfo:
@@ -583,15 +588,27 @@ class Resolver:
         if not items:
             return
 
-        # ── Phase 0: Prepare — group by type for shared metadata ──
-        # Pre-compute: expose_map, collector_aliases, resolve_methods, post_methods, send_to_map
-        # are all per-type (same for all instances of the same class).
-        type_meta: dict[
-            type, tuple[_ClassMeta, dict[str, str], dict[str, str | tuple[str, ...]]]
-        ] = {}
+        type_meta, level_state = self._prepare_level(items)
+        resolve_results, next_level = await self._execute_resolves(level_state)
+        auto_loaded_fields = await self._batch_auto_load(level_state, next_level)
+        self._collect_existing_children(level_state, auto_loaded_fields, next_level)
 
-        # Per-node state: (item, meta, new_ancestor_ctx, merged_collectors)
-        level_state: list[tuple[_WorkItem, _ClassMeta, dict[str, Any], dict[str, ICollector]]] = []
+        if next_level:
+            await self._process_level(next_level)
+
+        for node, field_name, result in resolve_results:
+            setattr(node, field_name, result)
+
+        await self._execute_posts(level_state)
+        self._collect_send_to(level_state, type_meta)
+        self._cleanup_collectors(level_state)
+
+    def _prepare_level(
+        self, items: list[_WorkItem]
+    ) -> tuple[dict[type, _LevelMeta], _LevelState]:
+        """Phase 0: group by type, build ancestor context and collector snapshots."""
+        type_meta: dict[type, _LevelMeta] = {}
+        level_state: _LevelState = []
 
         for item in items:
             node = item.node
@@ -605,7 +622,6 @@ class Resolver:
             else:
                 meta, expose_map, send_to_map = type_meta[node_type]
 
-            # Extend ancestor context with this node's ExposeAs fields
             if expose_map:
                 new_ancestor_ctx = dict(item.ancestor_context)
                 for field_name, alias in expose_map.items():
@@ -613,7 +629,6 @@ class Resolver:
             else:
                 new_ancestor_ctx = item.ancestor_context
 
-            # Create per-node collectors and merge with ancestor collectors
             if meta.collector_aliases:
                 node_collectors: dict[str, ICollector] = {
                     alias: Collector(alias=alias, flat=flat)
@@ -623,13 +638,17 @@ class Resolver:
                 merged_collectors = dict(item.collector_snapshot)
                 merged_collectors.update(node_collectors)
             else:
-                node_collectors = {}
                 merged_collectors = item.collector_snapshot
 
             level_state.append((item, meta, new_ancestor_ctx, merged_collectors))
 
-        # ── Phase 1: Execute resolve_* methods in parallel (collect results, don't traverse) ──
-        resolve_jobs: list[tuple[Any, str, Any, dict[str, Any], dict[str, ICollector]]] = []
+        return type_meta, level_state
+
+    async def _execute_resolves(
+        self, level_state: _LevelState
+    ) -> tuple[list[tuple[Any, str, Any]], list[_WorkItem]]:
+        """Phase 1: run all resolve_* methods concurrently and collect children."""
+        resolve_jobs: list[tuple[Any, str, dict[str, Any], dict[str, ICollector]]] = []
         resolve_coros: list[Any] = []
 
         for item, meta, new_ancestor_ctx, merged_collectors in level_state:
@@ -645,10 +664,8 @@ class Resolver:
                 )
                 resolve_jobs.append((node, field_name, new_ancestor_ctx, merged_collectors))
 
-        # Run all resolve_* methods concurrently so DataLoader can batch loads
         resolve_outputs = await asyncio.gather(*resolve_coros) if resolve_coros else []
 
-        # Collect results and extract children for merged traversal
         resolve_results: list[tuple[Any, str, Any]] = []
         next_level: list[_WorkItem] = []
 
@@ -668,11 +685,15 @@ class Resolver:
                     result, node, new_ancestor_ctx, merged_collectors,
                 ))
 
-        # Batch auto-load: group by relationship, collect FK values, load_many
-        auto_loaded_fields = await self._batch_auto_load(level_state, next_level)
+        return resolve_results, next_level
 
-        # Collect existing object-field children (skip fields set by auto-load
-        # and children whose type has no traversal work to do)
+    def _collect_existing_children(
+        self,
+        level_state: _LevelState,
+        auto_loaded_fields: set[tuple[int, str]],
+        next_level: list[_WorkItem],
+    ) -> None:
+        """Collect existing object-field children (skip auto-loaded and non-traversable)."""
         for item, _meta, new_ancestor_ctx, merged_collectors in level_state:
             node = item.node
             for field_name in type(node).model_fields:
@@ -693,15 +714,8 @@ class Resolver:
                                 c, node, new_ancestor_ctx, merged_collectors,
                             ))
 
-        # ── Phase 2: Process next level ──
-        if next_level:
-            await self._process_level(next_level)
-
-        # Set resolve results back on nodes (after children are fully traversed)
-        for node, field_name, result in resolve_results:
-            setattr(node, field_name, result)
-
-        # ── Phase 3: Post_* methods ──
+    async def _execute_posts(self, level_state: _LevelState) -> None:
+        """Phase 3: run all post_* methods."""
         for item, meta, _new_ancestor_ctx, _merged_collectors in level_state:
             if not meta.post_methods:
                 continue
@@ -714,7 +728,10 @@ class Resolver:
                     parent=item.parent, ancestor_context=item.ancestor_context,
                 )
 
-        # ── Phase 4: SendTo collection ──
+    def _collect_send_to(
+        self, level_state: _LevelState, type_meta: dict[type, _LevelMeta]
+    ) -> None:
+        """Phase 4: collect SendTo values into ancestor collectors."""
         for item, _meta, _new_ancestor_ctx, merged_collectors in level_state:
             node_type = type(item.node)
             _, _, send_to_map = type_meta[node_type]
@@ -732,7 +749,8 @@ class Resolver:
                     if collector is not None:
                         collector.add(value)
 
-        # ── Phase 5: Cleanup ──
+    def _cleanup_collectors(self, level_state: _LevelState) -> None:
+        """Phase 5: remove per-node collector references."""
         for item, meta, _new_ancestor_ctx, _merged_collectors in level_state:
             if meta.collector_aliases:
                 self._node_collectors.pop(id(item.node), None)
