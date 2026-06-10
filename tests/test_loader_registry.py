@@ -316,6 +316,7 @@ class TestPaginationValidation:
         rel_info = MagicMock(spec=RelationshipInfo)
         rel_info.is_list = True
         rel_info.page_loader = None
+        rel_info.direction = "ONETOMANY"
         rel_info.name = "items"
 
         mock_entity = MagicMock()
@@ -324,3 +325,28 @@ class TestPaginationValidation:
 
         with pytest.raises(ValueError, match="no order_by configured"):
             registry._validate_pagination()
+
+    def test_pagination_skips_custom_relationships(self):
+        """Custom relationships should be skipped in pagination validation."""
+        from unittest.mock import MagicMock
+
+        from nexusx.loader.registry import RelationshipInfo
+
+        registry = ErManager.__new__(ErManager)
+        registry._session_factory = get_test_session_factory()
+        registry._enable_pagination = True
+        registry._split_mode = False
+        registry._loader_instances = {}
+
+        rel_info = MagicMock(spec=RelationshipInfo)
+        rel_info.is_list = True
+        rel_info.page_loader = None
+        rel_info.direction = "CUSTOM"
+        rel_info.name = "custom_items"
+
+        mock_entity = MagicMock()
+        mock_entity.__name__ = "TestEntity"
+        registry._registry = {mock_entity: {"custom_items": rel_info}}
+
+        # Should not raise — custom relationships are skipped
+        registry._validate_pagination()
