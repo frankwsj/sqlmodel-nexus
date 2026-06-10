@@ -13,7 +13,7 @@ argument-hint: "[项目路径] 创建四阶段项目的目标目录"
 | **Phase 0** | 需求确认 | 实体 + 关系 + 聚合根 + 用例方法（与用户反复确认） |
 | **Phase 1** | Schema + ER Diagram + 聚合根入口 + mock seed | models + db(engine + session) + database(seed) + voyager |
 | **Phase 2** | Loader 实现 | models 方法体实现，GraphQL 可查询 |
-| **Phase 3** | UseCase 响应组装 + MCP | dtos + services + REST + MCP + Voyager 补充 services |
+| **Phase 3** | UseCase 响应组装 + MCP | dtos + services + REST（或 JSON-RPC）+ MCP + CLI + Voyager 补充 services |
 | **Phase 4** | OpenAPI spec → TS SDK | 端到端 SDK |
 
 ## 核心原则
@@ -252,6 +252,8 @@ fe/                 # Phase 4 前端 SDK
     └── client/         # HTTP client
 ```
 
+**REST 路由通过 `create_use_case_router(use_case_config)` 自动生成**，不需要手写 `router/` 目录。也可使用 `create_jsonrpc_router()` 替代 REST（JSON-RPC 2.0 协议）。
+
 ## 阶段间变化对照
 
 | 方面 | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
@@ -259,5 +261,5 @@ fe/                 # Phase 4 前端 SDK
 | 实体 | 纯字段 + Relationship + docstring + mock seed | methods.py 实现 + `mount_method()` 挂载到 Entity | 继承 Phase 2 | - |
 | 关系 | Relationship 声明 | DataLoader 实现 | DefineSubset 隐藏 FK | - |
 | 查询 | 无方法 | methods.py + `mount_method()` 挂载 | UseCaseService 封装（复用 methods.py） | - |
-| API | Voyager(ER diagram) | GraphiQL | GraphQL + REST + Voyager(+services) + MCP | TS SDK |
+| API | Voyager(ER diagram) | GraphiQL | GraphQL + REST（或 JSON-RPC）+ Voyager(+services) + MCP + CLI | TS SDK |
 | 响应 | N/A | 完整实体 | DefineSubset DTO | OpenAPI spec |
