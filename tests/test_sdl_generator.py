@@ -6,8 +6,8 @@ from typing import Optional
 from pydantic import BaseModel
 from sqlmodel import Field, SQLModel
 
-from nexusx import SDLGenerator, mutation, query
-from nexusx.sdl_generator import _python_type_to_graphql
+from nexusx import mutation, query
+from nexusx.sdl_generator import SDLGenerator, _python_type_to_graphql
 from nexusx.type_converter import TypeConverter
 from nexusx.utils.schema_helpers import get_core_types, is_input_type
 
@@ -461,8 +461,8 @@ class TestSDLGeneratorExtras:
 
     def test_pagination_types_generated(self):
         """enable_pagination=True should produce Pagination and Result types."""
-        from tests.conftest import FixtureSprint, FixtureTask, FixtureUser
         from nexusx.loader.registry import ErManager
+        from tests.conftest import FixtureSprint, FixtureTask, FixtureUser
 
         registry = ErManager(
             entities=[FixtureSprint, FixtureTask, FixtureUser],

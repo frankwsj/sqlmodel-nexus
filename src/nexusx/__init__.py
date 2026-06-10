@@ -59,10 +59,8 @@ from nexusx.decorator import mutation, query
 from nexusx.er_diagram import ErDiagram
 from nexusx.handler import GraphQLHandler
 from nexusx.loader import ErManager
-from nexusx.query_parser import FieldSelection, QueryParser
 from nexusx.relationship import Relationship
 from nexusx.resolver import Loader
-from nexusx.sdl_generator import SDLGenerator
 from nexusx.standard_queries import AutoQueryConfig, add_standard_queries
 from nexusx.subset import DefineSubset, SubsetConfig, build_dto_select
 from nexusx.use_case import (
@@ -70,22 +68,15 @@ from nexusx.use_case import (
     SelectionError,
     UseCaseAppConfig,
     UseCaseService,
-    create_flat_mcp_server,
     create_jsonrpc_router,
+    create_use_case_cli,
+    create_use_case_flat_server,
     create_use_case_mcp_server,
-    get_return_type,
 )
 from nexusx.use_case import (
     create_router as create_use_case_router,
 )
 from nexusx.voyager import create_use_case_voyager
-
-
-def __getattr__(name: str):
-    if name == "create_cli":
-        from nexusx.use_case.cli import create_cli
-        return create_cli
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     # Version
@@ -93,12 +84,8 @@ __all__ = [
     "query",
     "mutation",
     # Core classes
-    "SDLGenerator",
-    "QueryParser",
     "GraphQLHandler",
     "ErManager",
-    # Types
-    "FieldSelection",
     # Standard queries
     "AutoQueryConfig",
     "add_standard_queries",
@@ -121,11 +108,10 @@ __all__ = [
     "FromContext",
     "SelectionError",
     "create_use_case_mcp_server",
-    "create_flat_mcp_server",
-    "create_cli",
+    "create_use_case_flat_server",
+    "create_use_case_cli",
     "create_jsonrpc_router",
     "create_use_case_router",
-    "get_return_type",
     # Voyager visualization
     "create_use_case_voyager",
 ]

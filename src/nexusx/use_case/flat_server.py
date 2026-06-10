@@ -33,7 +33,7 @@ except ImportError:
     Context = None  # type: ignore[assignment, misc]
 
 
-def create_flat_mcp_server(
+def create_use_case_flat_server(
     apps: list[UseCaseAppConfig],
     name: str = "nexusx UseCase API",
 ) -> Any:
