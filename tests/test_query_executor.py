@@ -631,6 +631,68 @@ class TestQueryExecutorPagination:
             # end = offset(0) + 1 + 1 = 2, total = 2 → has_more = 2 > 2 = False
             assert page["pagination"]["has_more"] is False
 
+    @pytest.mark.usefixtures("test_db")
+    async def test_custom_relationship_with_pagination_enabled(self):
+        """Custom relationships should query normally when enable_pagination=True."""
+        from nexusx.relationship import Relationship
+
+        session_factory = get_test_session_factory()
+
+        # Custom loader: given FixtureSprint ids, return their tasks
+        async def _load_sprint_tasks(keys):
+            async with session_factory() as session:
+                result = await session.exec(
+                    select(FixtureTask).where(FixtureTask.sprint_id.in_(keys))
+                )
+                tasks = list(result.all())
+            grouped = {k: [] for k in keys}
+            for t in tasks:
+                grouped[t.sprint_id].append(t)
+            return [grouped[k] for k in keys]
+
+        # Add custom relationship to FixtureSprint at runtime
+        FixtureSprint.__relationships__ = [
+            Relationship(
+                fk="id",
+                target=list[FixtureTask],
+                name="custom_tasks",
+                loader=_load_sprint_tasks,
+            )
+        ]
+
+        try:
+            executor = _make_executor(
+                entities=[FixtureSprint, FixtureTask],
+                session_factory=session_factory,
+                enable_pagination=True,
+            )
+
+            class SprintQuery(SQLModel, table=False):
+                @query
+                async def get_all(cls):
+                    async with session_factory() as session:
+                        return list((await session.exec(select(FixtureSprint))).all())
+
+            method = _get_bound_method(SprintQuery, "get_all")
+            query_methods = {"sprints": (FixtureSprint, method)}
+            # Custom relationship field — no pagination wrapper, just a plain list
+            gql = "{ sprints { id name custom_tasks { id title } } }"
+            parsed = QueryParser().parse(gql)
+
+            result = await executor.execute_query(
+                gql, None, None, parsed, query_methods, {},
+                [FixtureSprint, FixtureTask],
+            )
+
+            sprints = result["data"]["sprints"]
+            assert len(sprints) == 2
+            for sprint in sprints:
+                assert "custom_tasks" in sprint
+                assert isinstance(sprint["custom_tasks"], list)
+                assert len(sprint["custom_tasks"]) == 2
+        finally:
+            del FixtureSprint.__relationships__
+
 
 class TestQueryExecutorSerializationExtras:
     def test_serialize_without_field_sel_uses_model_dump(self):

@@ -361,14 +361,23 @@ class ErManager:
             self._validate_pagination()
 
     def _validate_pagination(self) -> None:
-        """Validate all list relationships have page_loader (order_by configured)."""
+        """Validate all list relationships have page_loader (order_by configured).
+
+        Custom relationships are skipped — they work with the regular loader
+        and are not paginated even when global pagination is enabled.
+        """
         errors = []
         for entity_kls, rels in self._registry.items():
             for rel in rels.values():
-                if rel.is_list and rel.page_loader is None:
-                    errors.append(
-                        f"  {entity_kls.__name__}.{rel.name} — no order_by configured"
-                    )
+                if not rel.is_list:
+                    continue
+                if rel.page_loader is not None:
+                    continue
+                if rel.direction == "CUSTOM":
+                    continue
+                errors.append(
+                    f"  {entity_kls.__name__}.{rel.name} — no order_by configured"
+                )
         if errors:
             raise ValueError(
                 "enable_pagination is True but the following list "
