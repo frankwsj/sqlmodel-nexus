@@ -47,5 +47,6 @@ Thumbs.db
 *.manifest
 *.spec
 .claude
+CLAUDE.md
 
 site
