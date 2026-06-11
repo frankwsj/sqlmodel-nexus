@@ -467,30 +467,30 @@ class Resolver:
             return anno
         return None
 
-    @staticmethod
-    def _orm_to_dto(orm_instance: Any, dto_cls: type[BaseModel]) -> BaseModel:
+    # Cache: dto_cls -> pre-built subset_fields tuple (or None for model_validate path)
+    _dto_fields_cache: dict[type, tuple[str, ...] | None] = {}
+
+    @classmethod
+    def _orm_to_dto(cls, orm_instance: Any, dto_cls: type[BaseModel]) -> BaseModel:
         """Convert a SQLModel ORM instance to a DefineSubset DTO."""
-        subset_fields = getattr(dto_cls, "__subset_fields__", None)
+        subset_fields = cls._dto_fields_cache.get(dto_cls)
+        if subset_fields is None and dto_cls not in cls._dto_fields_cache:
+            subset_fields = getattr(dto_cls, "__subset_fields__", None)
+            cls._dto_fields_cache[dto_cls] = subset_fields
+
         if subset_fields is None:
             return dto_cls.model_validate(orm_instance)
-        kwargs = {}
-        for fname in subset_fields:
-            val = getattr(orm_instance, fname, None)
-            if val is not None:
-                kwargs[fname] = val
+
+        kwargs = {f: v for f in subset_fields if (v := getattr(orm_instance, f, None)) is not None}
         try:
             return dto_cls(**kwargs)
         except (PydanticUserError, NameError):
-            # Handle forward references from __future__ import annotations.
-            # Build a namespace with all known DefineSubset DTOs so
-            # model_rebuild can resolve type names like 'UserDTO'.
             import sys
 
             from nexusx.subset import _subset_registry
 
             module = sys.modules.get(dto_cls.__module__, None)
             ns = dict(vars(module)) if module else {}
-            # Add all known DefineSubset DTOs to the namespace
             for dto_class in _subset_registry:
                 ns[dto_class.__name__] = dto_class
             dto_cls.model_rebuild(_types_namespace=ns)

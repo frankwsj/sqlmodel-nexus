@@ -719,15 +719,16 @@ class TestQueryExecutorSerializationExtras:
         assert isinstance(result, list)
         assert len(result) == 2
 
-    def test_serialize_entity_returns_none_for_none(self):
-        """_serialize_entity should return None for None input."""
+    def test_serialize_item_returns_none_for_none(self):
+        """_serialize_item should return None-filtered result (via _serialize)."""
         executor = _make_executor()
-        assert executor._serialize_entity(None, FixtureUser, None) is None
+        # _serialize handles None at top level
+        assert executor._serialize(None, FixtureUser, None) is None
 
-    def test_serialize_entity_passes_through_dict(self):
-        """_serialize_entity should pass through dict values."""
+    def test_serialize_item_passes_through_dict(self):
+        """_serialize_item should pass through dict values."""
         executor = _make_executor()
-        assert executor._serialize_entity({"id": 1}, FixtureUser, None) == {"id": 1}
+        assert executor._serialize_item({"id": 1}, FixtureUser, None) == {"id": 1}
 
     def test_serialize_relationship_value_none(self):
         """_serialize_relationship_value should return None for None value."""
