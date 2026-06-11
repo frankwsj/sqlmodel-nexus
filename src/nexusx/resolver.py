@@ -295,6 +295,8 @@ class Resolver:
         self._auto_load_cache: dict[type, list] = {}
         # Type extraction cache: annotation → DTO class or None
         self._dto_cls_cache: dict[Any, type[BaseModel] | None] = {}
+        # Per-type cache: model type → list of (field_name, is_list) for traversable fields
+        self._traversable_fields_cache: dict[type, list[tuple[str, bool]] | None] = {}
 
     def _get_loader(
         self,
@@ -687,6 +689,37 @@ class Resolver:
 
         return resolve_results, next_level
 
+    def _get_traversable_fields(
+        self, node_type: type,
+    ) -> list[tuple[str, bool]] | None:
+        """Cache per-type: which fields can yield traversable children.
+
+        Returns list of (field_name, is_list) or None if no traversable fields.
+        """
+        cached = self._traversable_fields_cache.get(node_type)
+        if cached is not None:
+            return cached if cached else None
+
+        result: list[tuple[str, bool]] = []
+        for field_name, field_info in node_type.model_fields.items():
+            anno = field_info.annotation
+            if anno is None:
+                continue
+            origin = getattr(anno, "__origin__", None)
+            args = getattr(anno, "__args__", ())
+
+            if origin is list and args:
+                child_cls = args[0]
+                if isinstance(child_cls, type) and issubclass(child_cls, BaseModel):
+                    if _compute_should_traverse(child_cls):
+                        result.append((field_name, True))
+            elif isinstance(anno, type) and issubclass(anno, BaseModel):
+                if _compute_should_traverse(anno):
+                    result.append((field_name, False))
+
+        self._traversable_fields_cache[node_type] = result
+        return result if result else None
+
     def _collect_existing_children(
         self,
         level_state: _LevelState,
@@ -696,23 +729,25 @@ class Resolver:
         """Collect existing object-field children (skip auto-loaded and non-traversable)."""
         for item, _meta, new_ancestor_ctx, merged_collectors in level_state:
             node = item.node
-            for field_name in type(node).model_fields:
-                if (id(node), field_name) in auto_loaded_fields:
+            node_id = id(node)
+            traversable = self._get_traversable_fields(type(node))
+            if traversable is None:
+                continue
+            for field_name, is_list in traversable:
+                if (node_id, field_name) in auto_loaded_fields:
                     continue
                 val = getattr(node, field_name, None)
                 if val is None:
                     continue
-                if isinstance(val, BaseModel):
-                    if _compute_should_traverse(type(val)):
+                if is_list:
+                    for c in val:
                         next_level.append(_WorkItem(
-                            val, node, new_ancestor_ctx, merged_collectors,
+                            c, node, new_ancestor_ctx, merged_collectors,
                         ))
-                elif isinstance(val, list) and val and isinstance(val[0], BaseModel):
-                    if _compute_should_traverse(type(val[0])):
-                        for c in val:
-                            next_level.append(_WorkItem(
-                                c, node, new_ancestor_ctx, merged_collectors,
-                            ))
+                else:
+                    next_level.append(_WorkItem(
+                        val, node, new_ancestor_ctx, merged_collectors,
+                    ))
 
     async def _execute_posts(self, level_state: _LevelState) -> None:
         """Phase 3: run all post_* methods."""
