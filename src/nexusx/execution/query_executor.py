@@ -421,9 +421,10 @@ class QueryExecutor:
                 return self._filter_output(item.model_dump(mode="json"), entity)
             return {"_value": str(item)}
 
+        entity_rels = self._registry.get_relationships(entity)
         result = {}
         for field_name, child_sel in field_sel.sub_fields.items():
-            rel_info = self._registry.get_relationship(entity, field_name)
+            rel_info = entity_rels.get(field_name)
 
             if rel_info is not None:
                 value = self._retrieve(item, field_name)
