@@ -40,6 +40,7 @@ class VoyagerContext:
         version: str = "1.0.0",
     ):
         self.services = services
+        self._allowed_modules: set[str] = {svc.__module__ for svc in services}
         self.er_manager = er_manager
         self.name = name
         self.module_color = module_color or {}
@@ -242,11 +243,16 @@ class VoyagerContext:
                 if method is not None:
                     return method
 
-        # Fall back to module.ClassName import
+        # Fall back to module.ClassName import — restricted to service modules
         components = schema_name.split(".")
         if len(components) < 2:
             return None
         module_name = ".".join(components[:-1])
+        if not any(
+            module_name == m or module_name.startswith(m + ".")
+            for m in self._allowed_modules
+        ):
+            return None
         class_name = components[-1]
         mod = __import__(module_name, fromlist=[class_name])
         return getattr(mod, class_name)
