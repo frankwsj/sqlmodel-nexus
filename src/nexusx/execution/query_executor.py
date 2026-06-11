@@ -447,6 +447,8 @@ class QueryExecutor:
         if value is None:
             return None
 
+        target = rel_info.target_entity
+
         if (
             self._enable_pagination
             and rel_info.is_list
@@ -460,11 +462,10 @@ class QueryExecutor:
             wants_items = child_sel.sub_fields is not None and "items" in child_sel.sub_fields
             if wants_items:
                 items_sel = child_sel.sub_fields.get("items") if child_sel.sub_fields else None
-                serialized_items = [
-                    self._serialize_entity(v, rel_info.target_entity, items_sel)
-                    for v in items
+                page_result["items"] = [
+                    self._serialize_item(v, target, items_sel)
+                    for v in items if v is not None
                 ]
-                page_result["items"] = serialized_items
             # Only include pagination if the user selected it in the query
             wants_pagination = (
                 child_sel.sub_fields is not None and "pagination" in child_sel.sub_fields
@@ -489,24 +490,13 @@ class QueryExecutor:
 
         if isinstance(value, list):
             return [
-                self._serialize_entity(v, rel_info.target_entity, child_sel)
-                for v in value
+                self._serialize_item(v, target, child_sel)
+                for v in value if v is not None
             ]
 
-        return self._serialize_entity(value, rel_info.target_entity, child_sel)
-
-    def _serialize_entity(
-        self,
-        item: Any,
-        entity: type[SQLModel],
-        field_sel: FieldSelection | None,
-    ) -> dict[str, Any] | None:
-        """Serialize a single entity with nested fields."""
-        if item is None:
-            return None
-        if isinstance(item, dict):
-            return item
-        return self._serialize_item(item, entity, field_sel)
+        if isinstance(value, dict):
+            return value
+        return self._serialize_item(value, target, child_sel)
 
     def _filter_output(
         self, data: dict[str, Any], entity: type[SQLModel]
