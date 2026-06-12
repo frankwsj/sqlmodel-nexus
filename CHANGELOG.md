@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.9.1
+
+### Bug Fix: `list[T] | None` 和 `list[T | None]` 类型转换错误
+
+修复 `_python_type_to_graphql` 中 Optional 与 list 组合类型的 GraphQL SDL 生成错误。
+
+**根因：** `_python_type_to_graphql` 先检查 `origin is list`，再检查 Optional。对于 `list[str] | None`，`get_origin()` 返回 `UnionType` 而非 `list`，list 检查被跳过。Optional 分支 unwrap 后调用 `_python_type_to_graphql_inner`，而 `_inner` 不处理 list 类型，fallback 为 `String`。同理，`list[Entity | None]` 的元素类型也因 `_inner` 不处理 Optional 而 fallback 为 `String`。
+
+**影响：**
+- `list[str] | None` 参数/返回值 → SDL 中生成 `String` 而非 `[String!]`
+- `list[int] | None` 参数/返回值 → SDL 中生成 `String` 而非 `[Int!]`
+- `list[Entity | None]` 参数/返回值 → SDL 中元素类型丢失，fallback 为 `String`
+
+**Changes：**
+- `src/nexusx/sdl_generator.py`: Optional 分支改为递归调用 `_python_type_to_graphql`（而非 `_inner`），使 list 检查能再次命中；list 分支先 unwrap 元素的 Optional，再传给 `_inner`
+- 修正 `tests/test_sdl_generator.py::test_list_optional_int` 的错误期望（`[String]!` → `[Int]!`）
+- 新增 `tests/test_optional_list_param.py`：9 个测试覆盖 `list[str] | None`、`Optional[list[str]]`、`list[int] | None`、`list[str]`、`list[Entity | None]`、`list[str | None]` 及完整 SDL 生成
+
 ## 2.9.0
 
 ### Bug Fix: 自定义关系在全局分页下无法查询
