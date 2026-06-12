@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.9.2
+
+### New Feature: DefineSubset FK 字段自动注入
+
+FK 字段自动注入到 DTO（`model_fields`），供 Resolver 用作 DataLoader key 加载关系。与 PK auto-include 机制对称：字段存在但 `exclude=True`，不出现在 `model_dump()` 序列化输出中。`build_dto_select()` 自动排除这些字段，不生成多余的 SELECT 列。
+
+**行为：**
+- 未在 `__subset__` 中声明的 FK 字段自动注入，annotation 改为 `Optional`（`default=None`），`exclude=True`
+- 显式声明在 `__subset__` 中的 FK 字段保持原样，不受影响
+- `SubsetConfig(omit_fields=["owner_id"])` 可阻止 auto-include，但如果 DTO 同时声明了对应的关系字段（如 `owner: OwnerDTO`），会抛出 `ValueError`
+
+**Changes：**
+- `src/nexusx/subset.py`: 新增 `_get_fk_field_names()`；`_resolve_subset_fields` FK auto-include（尊重 `omit_fields`）；`_build_field_definitions` 对 auto-included FK 设 `Optional + default=None + exclude=True`；`_create_subset_class` 存 `__subset_auto_excluded__`；`build_dto_select` 排除 auto-excluded 字段；新增 `_validate_omitted_fk_not_needed()` 校验 omit FK 与关系字段冲突
+- 修正旧测试适配新行为；新增 2 个测试覆盖 omit FK 场景
+
 ## 2.9.1
 
 ### Bug Fix: `list[T] | None` 和 `list[T | None]` 类型转换错误

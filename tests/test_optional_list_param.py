@@ -1,4 +1,4 @@
-"""Regression test: list[str] | None parameter should produce [String], not String.
+"""Regression test: list[str] | None should produce [String!], not String.
 
 Bug: _python_type_to_graphql() checks `origin is list` before checking Optional.
 For `list[str] | None`, `get_origin()` returns UnionType, not list, so the list
@@ -16,7 +16,7 @@ from nexusx.sdl_generator import SDLGenerator, _python_type_to_graphql
 from nexusx.type_converter import TypeConverter
 
 
-# ── Entity with list[str] | None parameter ────────────────────────────
+# ── Entity with optional list parameters ───────────────────────────────
 
 
 class ItemForListBug(SQLModel):
@@ -53,17 +53,50 @@ class ItemForListBug(SQLModel):
         """Query with optional list[int]."""
         return []
 
+    @query
+    async def search_nullable_entities(
+        cls, ids: list[int | None] | None = None
+    ) -> list["ItemForListBug | None"]:
+        """Query with combined outer+inner optional list."""
+        return []
+
+
+def _extract_param_type(sdl: str, mutation_name: str, param_name: str) -> str | None:
+    """Extract the GraphQL type of a specific parameter from SDL.
+
+    Returns the type string (e.g. '[String!]!', [String!], String) or None.
+    """
+    target = f"{mutation_name}("
+    for line in sdl.splitlines():
+        line = line.strip()
+        if target in line:
+            # Find "paramName: <Type>" in the parameter list
+            needle = f"{param_name}: "
+            idx = line.find(needle)
+            if idx == -1:
+                continue
+            start = idx + len(needle)
+            rest = line[start:]
+            # Type ends at ',' or ')'
+            end = len(rest)
+            for ch in (",", ")"):
+                pos = rest.find(ch)
+                if pos != -1 and pos < end:
+                    end = pos
+            return rest[:end]
+    return None
+
 
 # ── Tests ─────────────────────────────────────────────────────────────
 
 
 class TestOptionalListParameterBug:
-    """list[T] | None should serialize to [T!], not String."""
+    """list[T] | None and list[T | None] should produce correct GraphQL types."""
 
     def setup_method(self) -> None:
         self.converter = TypeConverter(set())
 
-    # --- Direct type conversion ---
+    # --- Direct type conversion: outer Optional ---
 
     def test_list_str_none_produces_list_string(self):
         """list[str] | None should convert to [String!], not String."""
@@ -85,48 +118,10 @@ class TestOptionalListParameterBug:
         result = _python_type_to_graphql(list[str], self.converter)
         assert result == "[String!]!"
 
-    # --- Full SDL generation ---
-
-    def test_sdl_optional_list_param_is_list_type(self):
-        """In generated SDL, list[str] | None param should appear as [String!], not String."""
-        generator = SDLGenerator([ItemForListBug])
-        sdl = generator.generate()
-
-        # The required list version should work correctly
-        assert "tags: [String!]!" in sdl, "Required list[str] should be [String!]!"
-
-        # The optional list version — THIS IS THE BUG
-        # Currently produces: tags: String
-        # Should produce:     tags: [String!]
-        assert "tags: [String!]" in sdl, (
-            f"Optional list[str] | None should produce '[String!]', not 'String'.\n"
-            f"SDL:\n{sdl}"
-        )
-
-    def test_sdl_optional_typing_list_param(self):
-        """Optional[list[str]] (typing module) should also produce [String!]."""
-        generator = SDLGenerator([ItemForListBug])
-        sdl = generator.generate()
-
-        # find the createWithOptionalTyping mutation
-        # its `tags` param should be [String!], not String
-        assert "tags: [String!]" in sdl, (
-            f"Optional[list[str]] should produce '[String!]' in SDL.\n"
-            f"SDL:\n{sdl}"
-        )
-
-    def test_sdl_optional_list_int_param(self):
-        """list[int] | None param should produce [Int!], not String."""
-        generator = SDLGenerator([ItemForListBug])
-        sdl = generator.generate()
-
-        assert "ids: [Int!]" in sdl, (
-            f"list[int] | None should produce '[Int!]' in SDL.\n"
-            f"SDL:\n{sdl}"
-        )
+    # --- Direct type conversion: inner Optional ---
 
     def test_list_of_optional_entity_produces_nullable_element_list(self):
-        """list[Entity | None] should produce [Entity], not [String!]."""
+        """list[Entity | None] should produce [Entity]!, not [String!]."""
         converter = TypeConverter({"ItemForListBug"})
         result = _python_type_to_graphql(
             list[ItemForListBug | None], converter, entity_names={"ItemForListBug"}
@@ -136,6 +131,60 @@ class TestOptionalListParameterBug:
         )
 
     def test_list_of_optional_scalar_produces_nullable_element_list(self):
-        """list[str | None] should produce [String], not [String!]."""
+        """list[str | None] should produce [String]!, not [String!]."""
         result = _python_type_to_graphql(list[str | None], self.converter)
         assert result == "[String]!", f"Expected '[String]!' but got '{result}'"
+
+    def test_list_of_optional_int_produces_nullable_element_list(self):
+        """list[int | None] should produce [Int]!, not [String!]."""
+        result = _python_type_to_graphql(list[int | None], self.converter)
+        assert result == "[Int]!", f"Expected '[Int]!' but got '{result}'"
+
+    # --- Direct type conversion: combined outer+inner Optional ---
+
+    def test_list_of_optional_str_outer_none(self):
+        """list[str | None] | None should produce [String], not String."""
+        result = _python_type_to_graphql(list[str | None] | None, self.converter)
+        assert result == "[String]", f"Expected '[String]' but got '{result}'"
+
+    def test_list_of_optional_entity_outer_none(self):
+        """list[Entity | None] | None should produce [Entity], not String."""
+        converter = TypeConverter({"ItemForListBug"})
+        result = _python_type_to_graphql(
+            list[ItemForListBug | None] | None, converter, entity_names={"ItemForListBug"}
+        )
+        assert result == "[ItemForListBug]", (
+            f"Expected '[ItemForListBug]' but got '{result}'"
+        )
+
+    # --- Full SDL generation (precise extraction) ---
+
+    def test_sdl_required_list_param(self):
+        """Required list[str] param should produce [String!]!."""
+        sdl = SDLGenerator([ItemForListBug]).generate()
+        gql_type = _extract_param_type(sdl, "itemForListBugCreateWithRequiredTags", "tags")
+        assert gql_type == "[String!]!", f"Expected '[String!]!' but got '{gql_type}'"
+
+    def test_sdl_optional_list_param(self):
+        """list[str] | None param should produce [String!], not String."""
+        sdl = SDLGenerator([ItemForListBug]).generate()
+        gql_type = _extract_param_type(sdl, "itemForListBugCreateWithOptionalTags", "tags")
+        assert gql_type == "[String!]", f"Expected '[String!]' but got '{gql_type}'"
+
+    def test_sdl_optional_typing_list_param(self):
+        """Optional[list[str]] (typing module) should also produce [String!]."""
+        sdl = SDLGenerator([ItemForListBug]).generate()
+        gql_type = _extract_param_type(sdl, "itemForListBugCreateWithOptionalTyping", "tags")
+        assert gql_type == "[String!]", f"Expected '[String!]' but got '{gql_type}'"
+
+    def test_sdl_optional_list_int_param(self):
+        """list[int] | None param should produce [Int!], not String."""
+        sdl = SDLGenerator([ItemForListBug]).generate()
+        gql_type = _extract_param_type(sdl, "itemForListBugSearchOptionalInts", "ids")
+        assert gql_type == "[Int!]", f"Expected '[Int!]' but got '{gql_type}'"
+
+    def test_sdl_combined_optional_list_param(self):
+        """list[int | None] | None param should produce [Int], not String."""
+        sdl = SDLGenerator([ItemForListBug]).generate()
+        gql_type = _extract_param_type(sdl, "itemForListBugSearchNullableEntities", "ids")
+        assert gql_type == "[Int]", f"Expected '[Int]' but got '{gql_type}'"
