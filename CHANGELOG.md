@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.10.0
+
+### New Feature: Resolver `post_default_handler` 收尾钩子
+
+新增保留方法 `post_default_handler(self)`，在该节点所有 `post_*` 方法执行完毕后运行，用于跨多个 `post_*` 字段的聚合 / 收尾计算（如根据多个计数算 completion_rate、拼接 summary）。语义对齐 pydantic-resolve 的同名特性。
+
+**行为：**
+- 固定方法名 `post_default_handler`（非 `post_<field>`，不绑定到某个字段）
+- 在同节点所有 `post_*` 完成后执行（可安全读取它们写入的字段）
+- **不自动赋值**：返回值被忽略，方法体内手动 `self.xxx = ...`（可一次写多个字段）
+- 支持与 `post_*` 相同的参数注入：`context` / `parent` / `ancestor_context` / `Loader` / `Collector`，可为 `async`
+- 由于 BFS 递归先于 `post_*` 阶段，`post_default_handler` 能读到后代 `SendTo` 已经收集进祖先 Collector 的值
+
+**与 pydantic-resolve 的差异：** nexusx 额外允许在 `post_default_handler` 中使用 `Loader`（pydantic-resolve 显式禁用），保持与 `post_*` 内部一致。
+
+**示例：**
+
+```python
+class SprintView(BaseModel):
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    completion_rate: float = 0.0
+    summary: str = ""
+
+    def post_total_tasks(self):
+        return len(self.tasks)
+
+    def post_completed_tasks(self):
+        return len([t for t in self.tasks if t.status == "done"])
+
+    def post_default_handler(self):
+        # runs after post_total_tasks / post_completed_tasks
+        self.completion_rate = (
+            self.completed_tasks / self.total_tasks
+            if self.total_tasks else 0.0
+        )
+        self.summary = f"{self.completion_rate:.0%} complete"
+```
+
+**Changes：**
+- `src/nexusx/resolver.py`: 新增 `POST_DEFAULT_HANDLER` 常量；`_ClassMeta` 增加 `post_default_handler` 字段；`_build_class_meta` 优先识别保留名（避免被 `post_*` 前缀分支误当成 `default_handler` 字段）；`_compute_should_traverse` 计入该方法（否则仅含该钩子的子节点不会被遍历）；`_execute_posts` 末尾追加一轮调用（不 setattr）
+- `tests/test_resolver.py`: 新增 `TestResolverPostDefaultHandler`（9 个测试覆盖执行顺序、返回值忽略、async、Collector、context、parent、ancestor_context、仅含 handler 的子节点遍历、多兄弟节点）
+- `CLAUDE.md`: 更新 Resolver 执行顺序（新增第 4 步）与常见陷阱（保留方法名）
+
 ## 2.9.2
 
 ### New Feature: DefineSubset FK 字段自动注入
