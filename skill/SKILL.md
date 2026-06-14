@@ -202,7 +202,49 @@ service/<domain>/methods.py  ← 独立定义业务逻辑（核心）
 
 **必须与用户确认每个领域的选型后才能继续。**
 
-### Step 0-7: 检查清单
+### Step 0-7: 数据持久化与迁移策略
+
+**⚠️ 必须由用户明确选定 DB 类型与迁移策略，决定 Phase 1 的 `db.py` / `database.py` 实现方式以及是否引入 alembic。**
+
+#### 选型决策表
+
+| 选项 | async DB URL | 持久化 | Alembic | 额外依赖 | 适用场景 |
+|------|-------------|--------|---------|---------|---------|
+| **In-memory SQLite** | `sqlite+aiosqlite://` | ❌ 进程退出即丢 | ❌ 不需要 | `aiosqlite` | 纯原型/Demo/团队讨论数据样本，不关心数据保留 |
+| **File-backed SQLite** | `sqlite+aiosqlite:///./var/<name>.db` | ✅ 文件 | ✅ 必须 | `aiosqlite` | 本地开发、单人项目、轻量持久化 |
+| **Docker PostgreSQL** | `postgresql+asyncpg://user:pwd@localhost:5432/db` | ✅ 容器卷 | ✅ 必须 | `asyncpg` + docker-compose | 团队开发、生产前演练 |
+| **Docker MySQL** | `mysql+aiomysql://user:pwd@localhost:3306/db` | ✅ 容器卷 | ✅ 必须 | `aiomysql` + docker-compose | 同上，团队偏好 MySQL |
+| **External DB** | 各种 | ✅ | ✅ 必须 | 视驱动 | 已有 DB 基础设施 |
+
+#### 决策影响（下游 Phase 必须遵守）
+
+- **Phase 1 `db.py`**：engine URL 取决于此决策
+- **Phase 1 `database.py`**：
+  - **in-memory**：`init_db()` 做 `create_all` + mock seed（每次重启自动恢复，讨论用样本数据）
+  - **持久化（file / docker / external）**：`init_db()` 改为 no-op，schema 由 alembic 管，seed 改为一次性 `scripts/load_seed.py`（保留 ID）
+- **Phase 1 引入 alembic**（持久化场景必须）：
+  - `alembic init alembic`
+  - `env.py`：`import src.models` 注册表 + `target_metadata = SQLModel.metadata` + 同步 URL（app 用 async，alembic 用 sync）
+  - SQLite 必须 `render_as_batch=True`；PostgreSQL / MySQL 不需要
+  - `script.py.mako` 模板加 `import sqlmodel`（SQLModel 的 `AutoString` 类型需要）
+  - `pyproject.toml` 加 `alembic>=1.13`
+  - 生成 baseline：`alembic revision --autogenerate -m "init schema"` → 检查 → `alembic upgrade head`
+  - `.gitignore` 加 `var/`（file sqlite 场景）
+
+#### 用户必须输出的明确结论（写入 `spec/phase0.md`）
+
+```
+DB 选型：[in-memory sqlite / file sqlite / docker pg / docker mysql / external ___]
+async DATABASE_URL：________________
+sync DATABASE_URL_SYNC（alembic + load_seed 用）：________________
+是否引入 alembic：[是 / 否]
+是否需要 docker-compose：[是 / 否]
+init_db() 策略：[create_all+seed / no-op+alembic / 其他]
+```
+
+**用户未明确选定前，禁止进入 Phase 1。**
+
+### Step 0-8: 检查清单
 
 全部确认后，向用户展示汇总，确保以下问题已回答：
 
@@ -212,6 +254,7 @@ service/<domain>/methods.py  ← 独立定义业务逻辑（核心）
 - [ ] **Service 切分方案是否由用户确认（不是模型自行决定）？**
 - [ ] 核心用例是否覆盖主要业务场景，逻辑是否自洽？
 - [ ] 第三方库选型是否确认，维护状态是否已调查？
+- [ ] **DB 选型 + 迁移策略是否由用户明确确认（Step 0-7）？**
 - [ ] 是否有明显的遗漏或边界情况需要讨论？
 
 **全部确认后才能进入 Phase 1。**
@@ -227,8 +270,8 @@ service/<domain>/methods.py  ← 独立定义业务逻辑（核心）
 ```
 src/
 ├── models.py       # Phase 1 纯实体 → Phase 2 从 methods 挂载 @query/@mutation
-├── db.py           # Phase 1（engine + session factory，不依赖 models）
-├── database.py     # Phase 1（mock seed，依赖 db + models）
+├── db.py           # Phase 1（engine + session factory，不依赖 models；URL 由 Step 0-7 DB 选型决定）
+├── database.py     # Phase 1（in-memory: create_all+seed；持久化: no-op，schema 由 alembic 管）
 ├── service/        # Phase 2 新增 methods.py，Phase 3 补充 service.py/dtos.py
 │   ├── auth/       # 按业务域划分（非按实体）
 │   │   ├── methods.py  # Phase 2: 独立业务方法
@@ -243,6 +286,15 @@ src/
 │       ├── test.py
 │       └── spec.md
 ├── main.py         # 逐步扩展（voyager → graphql → create_use_case_router → mcp）
+alembic/            # Phase 1 持久化场景才引入（file sqlite / docker / external）
+├── env.py          # 接 SQLModel.metadata + sync URL + render_as_batch（sqlite）
+├── script.py.mako  # 模板加 import sqlmodel
+└── versions/       # 自动生成的迁移文件
+scripts/            # Phase 1 持久化场景
+└── load_seed.py    # 一次性把 var/seed_data.json 灌入文件 DB（保留 ID）
+var/                # gitignored（file sqlite 场景）
+├── note-tool.db    # 实际 DB 文件
+└── seed_data.json  # mock seed 数据
 fe/                 # Phase 4 前端 SDK
 ├── openapi-ts.config.ts
 ├── package.json

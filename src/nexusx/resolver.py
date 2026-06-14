@@ -389,8 +389,11 @@ class Resolver:
         1. No manual resolve_* method exists for the field
         2. The field is not part of the __subset__ definition (it's an extra field)
         3. The field name matches a registered relationship on the source entity
-        4. The field type is a BaseModel subclass (DTO)
-        5. The DTO type is compatible with the relationship's target entity
+        4. Either:
+           a. The field type is a BaseModel DTO compatible with the relationship's
+              target entity, OR
+           b. The field type is a scalar (list[int], str, ...) matching a CUSTOM
+              Relationship whose raw target is the same primitive type.
 
         Returns list of (field_name, rel_name, rel_info, field_info).
         """
@@ -430,13 +433,17 @@ class Resolver:
             if field_name not in entity_rels:
                 continue
 
-            # Field type must be a BaseModel DTO
+            # Field type must be a BaseModel DTO, or a scalar matching a
+            # CUSTOM relationship whose raw target is the same primitive type
+            # (e.g. field=list[int] vs Relationship(target=list[int])).
             dto_cls = self._extract_dto_cls(field_info)
+            rel_info = entity_rels[field_name]
             if dto_cls is None:
+                if self._is_scalar_rel_field(field_info, rel_info):
+                    results.append((field_name, field_name, rel_info, field_info))
                 continue
 
             # DTO must be compatible with the relationship's target entity
-            rel_info = entity_rels[field_name]
             if is_compatible_type(dto_cls, rel_info.target_entity):
                 results.append((field_name, field_name, rel_info, field_info))
 
@@ -493,6 +500,23 @@ class Resolver:
         if isinstance(anno, type) and issubclass(anno, BaseModel):
             return anno
         return None
+
+    @staticmethod
+    def _is_scalar_rel_field(field_info: Any, rel_info: Any) -> bool:
+        """True if a non-DTO scalar field still matches a custom relationship.
+
+        Used when the field type is a primitive (e.g. ``list[int]``, ``str``)
+        rather than a BaseModel DTO, but the relationship is a CUSTOM
+        ``Relationship`` whose raw ``target`` equals that primitive type.
+        """
+        from nexusx.utils.type_compat import is_compatible_type
+
+        if getattr(rel_info, "direction", "") != "CUSTOM":
+            return False
+        raw_target = (
+            list[rel_info.target_entity] if rel_info.is_list else rel_info.target_entity
+        )
+        return is_compatible_type(field_info.annotation, raw_target)
 
     # Cache: dto_cls -> pre-built subset_fields tuple (or None for model_validate path)
     _dto_fields_cache: dict[type, tuple[str, ...] | None] = {}

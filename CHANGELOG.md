@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.10.1
+
+### Bug Fix: scalar-list 自定义关系字段支持隐式 auto-load
+
+修复 DTO 字段类型为 scalar（如 `list[int]` / `str`）且字段名匹配一个 `Relationship(target=list[int])` / `Relationship(target=str)` 形式的 CUSTOM 自定义关系时，隐式 auto-load 被静默跳过的问题。此前 `_scan_auto_load_fields` 强制要求字段类型为 BaseModel 子类（DTO），导致 scalar 类型字段即使匹配关系也不会自动加载，必须手写 `resolve_*` 才行。
+
+**行为：**
+- DTO 字段类型为 BaseModel DTO → 走原有路径（兼容性用 `is_compatible_type(dto_cls, target_entity)` 校验）
+- DTO 字段类型为 scalar primitive → 仅当对应关系方向为 `CUSTOM` 且字段 annotation 与关系原始 `target`（按 `is_list` 重建 `list[target_entity]` 或 `target_entity`）兼容时，加入 auto-load 列表
+- ORM 关系（MANYTOONE / ONETOMANY / MANYTOMANY）target 是 SQLModel 实体，scalar 字段不会误匹配
+- 下游 `_batch_auto_load` 在 `dto_cls=None` 时已能正确处理（跳过 ORM→DTO 转换、跳过子节点 BFS 追加），本次修复无需改动加载链路
+
+**Changes：**
+- `src/nexusx/resolver.py`: `_scan_auto_load_fields` 把 `rel_info` 查询提到 `dto_cls` 判空之前，新增 scalar 分支调用 `_is_scalar_rel_field`；新增 `_is_scalar_rel_field` 静态方法（按 `is_list` 重建 raw target 并复用 `is_compatible_type`）
+- `tests/test_autoload.py`: 新增 `TestAutoLoadScalarListField`（2 个测试覆盖 scalar-list 隐式 auto-load + 显式 `resolve_*` 回退路径）
+
+### Docs: skill Phase 0/1 增加 DB 选型与 alembic 迁移策略
+
+skill 4-phase 开发模式文档增强：Phase 0 新增 Step 0-7「数据持久化与迁移策略」，列出 in-memory sqlite / file sqlite / docker pg / docker mysql / external DB 五种选型的对比表，并明确 alembic 引入条件、`init_db()` 实现策略、`scripts/load_seed.py` 一次性灌种等下游影响；Phase 1 `db.py` / `database.py` 实现描述与 Phase 0 决策挂钩，新增 alembic baseline 验证步骤。
+
+**Changes：**
+- `skill/SKILL.md`: Step 0-7 数据持久化决策表 + alembic 引入清单 + 目录结构调整（alembic / scripts / var）
+- `skill/phases/phase1.md`: db.py URL 来源、database.py 双策略（in-memory create_all+seed vs 持久化 no-op+alembic）、alembic baseline 验证
+- `skill/spec-management.md`: 配套字段更新
+
+**版本同步：**
+- `pyproject.toml`: 2.10.0 → 2.10.1
+- `uv.lock`: 同步 nexusx 包版本（v2.10.0 发布时漏同步的 2.9.2→2.10.0 一并修正至 2.10.1）
+
 ## 2.10.0
 
 ### New Feature: Resolver `post_default_handler` 收尾钩子

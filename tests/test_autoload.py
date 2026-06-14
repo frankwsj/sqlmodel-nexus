@@ -5,9 +5,10 @@ from __future__ import annotations
 import pytest
 from aiodataloader import DataLoader
 from pydantic import BaseModel
-from sqlmodel import select
+from sqlmodel import Field, SQLModel, select
 
 from nexusx.loader.registry import ErManager
+from nexusx.relationship import Relationship
 from nexusx.resolver import Depends, Loader, Resolver
 from nexusx.subset import DefineSubset
 from tests.conftest import (
@@ -388,3 +389,95 @@ class TestAutoLoadSubsetFields:
         assert "sprint_id" in TaskDTO.__subset_fields__
         # Auto-included FK fields are tracked in __subset_auto_excluded__
         assert "owner_id" in TaskDTO.__subset_auto_excluded__
+
+
+# ──────────────────────────────────────────────────────────
+# Scalar-list custom relationship fields are auto-loaded
+# ──────────────────────────────────────────────────────────
+
+
+class TestAutoLoadScalarListField:
+    """Scalar-list custom relationship fields auto-load like DTO-typed ones.
+
+    A DTO field whose type is a primitive (e.g. ``list[int]``) and whose name
+    matches a registered CUSTOM ``Relationship`` with the same primitive
+    ``target`` is auto-loaded — no explicit ``resolve_*`` required. The
+    explicit-resolve form in the second test documents the manual fallback.
+    """
+
+    async def test_custom_relationship_targeting_scalar_list_autoloads(self):
+        """DTO ``ids: list[int]`` matching ``Relationship(target=list[int])`` should populate."""
+
+        async def ids_loader(keys: list[int]) -> list[list[int]]:
+            table = {1: [10, 20], 2: [30]}
+            return [table.get(k, []) for k in keys]
+
+        class ScalarEntity(SQLModel, table=True):
+            __tablename__ = "scalar_list_autoload_entity"
+
+            id: int | None = Field(default=None, primary_key=True)
+
+            __relationships__ = [
+                Relationship(
+                    fk="id",
+                    target=list[int],
+                    name="ids",
+                    loader=ids_loader,
+                )
+            ]
+
+        registry = ErManager(
+            entities=[ScalarEntity],
+            session_factory=lambda: None,
+        )
+
+        class ScalarDTO(DefineSubset):
+            __subset__ = (ScalarEntity, ("id",))
+            ids: list[int] = []
+
+        result = await Resolver(registry).resolve(
+            [ScalarDTO(id=1), ScalarDTO(id=2)]
+        )
+
+        assert result[0].ids == [10, 20]
+        assert result[1].ids == [30]
+
+    async def test_scalar_list_field_works_with_explicit_resolve(self):
+        """Documented workaround: explicit ``resolve_*`` with ``Loader(callable)``."""
+
+        async def ids_loader(keys: list[int]) -> list[list[int]]:
+            table = {1: [10, 20], 2: [30]}
+            return [table.get(k, []) for k in keys]
+
+        class WorkaroundEntity(SQLModel, table=True):
+            __tablename__ = "scalar_list_workaround_entity"
+
+            id: int | None = Field(default=None, primary_key=True)
+
+            __relationships__ = [
+                Relationship(
+                    fk="id",
+                    target=list[int],
+                    name="ids",
+                    loader=ids_loader,
+                )
+            ]
+
+        registry = ErManager(
+            entities=[WorkaroundEntity],
+            session_factory=lambda: None,
+        )
+
+        class WorkaroundDTO(DefineSubset):
+            __subset__ = (WorkaroundEntity, ("id",))
+            ids: list[int] = []
+
+            def resolve_ids(self, loader=Loader(ids_loader)):
+                return loader.load(self.id)
+
+        result = await Resolver(registry).resolve(
+            [WorkaroundDTO(id=1), WorkaroundDTO(id=2)]
+        )
+
+        assert result[0].ids == [10, 20]
+        assert result[1].ids == [30]
