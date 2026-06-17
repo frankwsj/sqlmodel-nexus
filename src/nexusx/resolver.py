@@ -53,7 +53,18 @@ from nexusx.context import (
     scan_send_to_fields,
 )
 
-T = TypeVar("T")
+T = TypeVar("T", bound=BaseModel | list[BaseModel] | tuple[BaseModel, ...])
+
+
+# Module-level sentinel for caches that need to distinguish "not yet
+# computed" from "computed to None / empty list". A regular None or [] value
+# is a valid cached result; only the sentinel means "absent".
+_MISSING: Any = object()
+
+# Shared empty-dict sentinel for _LevelNode.collector_snapshot default.
+# Treated as read-only — Phase B-1 replaces it with a fresh dict when a node
+# actually has Collectors to merge, never mutates in place.
+_EMPTY_SNAPSHOT: dict[str, ICollector] = {}
 
 
 # ──────────────────────────────────────────────────────────
@@ -147,11 +158,26 @@ class _ClassMeta:
     # Whether this class or any descendant needs traversal.
     # None = not yet computed; True/False = computed result.
     should_traverse: bool | None = None
+    # Cached scans of ExposeAs / SendTo annotations on this class. Hoisted
+    # out of the per-node hot path; lookup once per class, not per instance.
+    expose_map: dict[str, str] = field(default_factory=dict)
+    send_to_map: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
-# Type aliases for level processing
-_LevelMeta = tuple[_ClassMeta, dict[str, str], dict[str, str | tuple[str, ...]]]
-_LevelState = list[tuple[_WorkItem, _ClassMeta, dict[str, Any], dict[str, ICollector]]]
+# Level-node layout used across Phase A and Phase B.
+# Stored as a plain tuple rather than a dataclass: at 1k+ nodes per level,
+# dataclass construction is ~2.4x slower than tuple construction, which
+# dominated L2 Large resolver-only timings. Named access is preserved via
+# loop unpacking at consumer sites: ``for item, meta, ctx, snap in level:``.
+#
+# Indices:
+#   0: item            — _WorkItem(node, parent, ancestor_context, collector_snapshot)
+#   1: meta            — _ClassMeta for type(item.node)
+#   2: new_ancestor_context — context this node's descendants will inherit
+#   3: collector_snapshot   — per-node collector dict, or _EMPTY_SNAPSHOT
+_LevelNode = tuple[
+    _WorkItem, _ClassMeta, dict[str, Any], dict[str, ICollector],
+]
 
 
 def _analyze_method_params(
@@ -248,6 +274,11 @@ def _get_class_meta(kls: type) -> _ClassMeta:
     if cached is not None:
         return cached
     meta = _build_class_meta(kls)
+    # Hoist per-class annotation scans onto meta so the per-node hot path
+    # in _init_level_nodes / _collect_send_to_for_node doesn't re-walk
+    # model_fields for every instance.
+    meta.expose_map = scan_expose_fields(kls)
+    meta.send_to_map = scan_send_to_fields(kls)
     _class_meta_cache[kls] = meta
     return meta
 
@@ -306,6 +337,16 @@ class Resolver:
         context: Optional context dict accessible via `context` parameter.
     """
 
+    # Class-level caches shared across Resolver instances. Both depend only
+    # on type identity (annotation objects / model classes), not on the
+    # per-instance registry or context, so sharing is safe and avoids
+    # re-computing on every Resolver() construction.
+    #
+    # Sentinel ``_MISSING`` distinguishes "not yet computed" from cached
+    # None / empty-list results (issue #77 B4).
+    _dto_cls_cache: dict[Any, Any] = {}
+    _traversable_fields_cache: dict[type, Any] = {}
+
     def __init__(
         self,
         loader_registry: Any = None,
@@ -313,17 +354,17 @@ class Resolver:
     ):
         self._registry = loader_registry
         self._context = context or {}
-        # Per-node collector instances (for Collector parameter injection)
+        # Per-node collector instances keyed by id(node). Safe because every
+        # node is held alive by its _LevelNode entry across the levels list
+        # for the whole traversal, and Phase B-2 pops entries level-by-level
+        # before any node can be GC'd. Do NOT use this map outside the
+        # Phase A → Phase B window.
         self._node_collectors: dict[int, dict[str, ICollector]] = {}
         # Loader instance cache for Depends-based loaders
         self._loader_cache: dict[Any, DataLoader] = {}
         # Auto-load plan cache: DTO class → auto-load specs (per Resolver,
         # avoids id(registry) reuse issues across ErManager lifetimes)
         self._auto_load_cache: dict[type, list] = {}
-        # Type extraction cache: annotation → DTO class or None
-        self._dto_cls_cache: dict[Any, type[BaseModel] | None] = {}
-        # Per-type cache: model type → list of (field_name, is_list) for traversable fields
-        self._traversable_fields_cache: dict[type, list[tuple[str, bool]] | None] = {}
 
     def _get_loader(
         self,
@@ -454,14 +495,13 @@ class Resolver:
         """Extract the DTO class from a field annotation.
 
         Handles Optional, list, Annotated wrappers.
-        Results are cached by annotation object for repeated lookups.
+        Results are cached by annotation object on the class — sentinel
+        ``_MISSING`` distinguishes "not computed" from "computed to None".
         """
         anno = field_info.annotation
-        cached = self._dto_cls_cache.get(anno)
-        if cached is not None:
+        cached = self._dto_cls_cache.get(anno, _MISSING)
+        if cached is not _MISSING:
             return cached
-        if anno in self._dto_cls_cache:
-            return None
 
         result = self._do_extract_dto_cls(anno)
         self._dto_cls_cache[anno] = result
@@ -469,36 +509,63 @@ class Resolver:
 
     @staticmethod
     def _do_extract_dto_cls(anno: Any) -> type[BaseModel] | None:
-        """Actual type extraction logic (uncached)."""
-        # Resolve string annotations from __future__ import annotations
+        """Actual type extraction logic (uncached).
+
+        Returns None for string annotations (from ``__future__ import
+        annotations`` or unresolved forward refs) — callers must invoke
+        ``model_rebuild()`` before traversal if such fields need to be
+        followed. Returning None here is a silent degradation path, not
+        a crash, so users who forget to rebuild simply see missing
+        descendants rather than a confusing error.
+        """
+        extracted = Resolver._extract_dto_cls_and_cardinality(anno)
+        return extracted[0] if extracted is not None else None
+
+    @staticmethod
+    def _extract_dto_cls_and_cardinality(
+        anno: Any,
+    ) -> tuple[type[BaseModel], bool] | None:
+        """Extract ``(dto_cls, is_list)`` from an annotation.
+
+        Handles ``Annotated[X, ...]``, ``Optional[X]`` / ``X | None``
+        (PEP 604 unions), and ``list[X]`` wrappers. ``is_list`` is True
+        only when the unwrapped annotation was syntactically a list
+        (``list[X]``, ``list[X] | None``); single-model fields always
+        return ``False``.
+
+        Returns ``None`` when the annotation does not refer to a single
+        BaseModel subclass (e.g. scalars, bare ``None``, unions of two
+        non-None types).
+        """
         if isinstance(anno, str):
             return None
 
-        # Unwrap Annotated
+        # Unwrap Annotated[X, ...] → X
         origin = get_origin(anno)
         if origin is typing.Annotated:
             anno = get_args(anno)[0]
             origin = get_origin(anno)
 
-        # Unwrap Optional (Union[X, None])
-        if origin is type(None):
-            return None
+        # Unwrap Optional / Union[X, None] → X when exactly one non-None arm.
+        # ``origin is not list`` guards against misinterpreting ``list[X]``'s
+        # own __args__ as a union.
         args = get_args(anno)
-        if args:
+        if args and origin is not list:
             non_none = [a for a in args if a is not type(None)]
             if len(non_none) == 1 and len(args) > 1:
                 anno = non_none[0]
                 origin = get_origin(anno)
 
-        # Unwrap list
+        # Unwrap list[X] → X, remember cardinality
+        is_list = False
         if origin is list:
+            is_list = True
             args = get_args(anno)
             if args:
                 anno = args[0]
 
-        # Check if it's a BaseModel subclass
         if isinstance(anno, type) and issubclass(anno, BaseModel):
-            return anno
+            return anno, is_list
         return None
 
     @staticmethod
@@ -532,6 +599,12 @@ class Resolver:
         if subset_fields is None:
             return dto_cls.model_validate(orm_instance)
 
+        # Skip None values: subset-generated DTOs give every extra field a
+        # default, so omitting a key is equivalent to using its default — and
+        # keeps "DB NULL" indistinguishable from "field absent on the DTO",
+        # which is the desired behavior for read-side projections. If a future
+        # use case needs to distinguish NULL from default, this is the line
+        # to revisit (issue #77 review).
         kwargs = {f: v for f in subset_fields if (v := getattr(orm_instance, f, None)) is not None}
         try:
             return dto_cls(**kwargs)
@@ -551,6 +624,49 @@ class Resolver:
     # Method execution with cached parameter info
     # ──────────────────────────────────────────────────────
 
+    def _build_injected_params(
+        self,
+        node: Any,
+        param_info: _MethodParamInfo,
+        *,
+        parent: Any = None,
+        ancestor_context: dict[str, Any] | None = None,
+        inject_collectors: bool = False,
+    ) -> dict[str, Any]:
+        """Build the kwargs dict for a resolve_* / post_* / post_default_handler
+        method, given its pre-parsed parameter info.
+
+        ``inject_collectors`` enables Collector parameter injection (only
+        post_* / post_default_handler declare Collector defaults; resolve_*
+        never does).
+
+        Hoisted out of ``_execute_resolve_method`` and ``_execute_post_method``
+        to consolidate the ~12 duplicated lines of context / parent /
+        ancestor_context / loader injection (issue #77 B1).
+        """
+        params: dict[str, Any] = {}
+
+        if param_info.has_context:
+            params["context"] = self._context
+        if param_info.has_parent:
+            params["parent"] = parent
+        if param_info.has_ancestor_context:
+            params["ancestor_context"] = ancestor_context if ancestor_context is not None else {}
+
+        if inject_collectors:
+            for param_name, collector_default in param_info.collector_deps:
+                node_cols = self._node_collectors.get(id(node), {})
+                collector = node_cols.get(collector_default.alias)
+                if collector is not None:
+                    params[param_name] = collector
+
+        for param_name, dep in param_info.loader_deps:
+            loader = self._resolve_dep(node, dep)
+            if loader is not None:
+                params[param_name] = loader
+
+        return params
+
     async def _execute_resolve_method(
         self,
         node: Any,
@@ -561,22 +677,15 @@ class Resolver:
         ancestor_context: dict[str, Any] | None = None,
     ) -> Any:
         """Execute a resolve_* method with parameter injection using cached info."""
-        params = {}
-
-        if param_info.has_context:
-            params["context"] = self._context
-        if param_info.has_parent:
-            params["parent"] = parent
-        if param_info.has_ancestor_context:
-            params["ancestor_context"] = ancestor_context if ancestor_context is not None else {}
-
-        for param_name, dep in param_info.loader_deps:
-            loader = self._resolve_dep(node, dep)
-            if loader is not None:
-                params[param_name] = loader
-
+        params = self._build_injected_params(
+            node, param_info, parent=parent, ancestor_context=ancestor_context,
+        )
         result = method(**params)
-        while inspect.isawaitable(result):
+        # Single await is enough: resolve_* methods are either sync or
+        # `async def` returning the value directly. The historical `while`
+        # loop was a defensive no-op for the (unsupported) case of methods
+        # returning a coroutine that itself returns a coroutine.
+        if inspect.isawaitable(result):
             result = await result
         return result
 
@@ -590,28 +699,13 @@ class Resolver:
         ancestor_context: dict[str, Any] | None = None,
     ) -> Any:
         """Execute a post_* method with parameter injection using cached info."""
-        params = {}
-
-        if param_info.has_context:
-            params["context"] = self._context
-        if param_info.has_parent:
-            params["parent"] = parent
-        if param_info.has_ancestor_context:
-            params["ancestor_context"] = ancestor_context if ancestor_context is not None else {}
-
-        for param_name, collector_default in param_info.collector_deps:
-            node_cols = self._node_collectors.get(id(node), {})
-            collector = node_cols.get(collector_default.alias)
-            if collector is not None:
-                params[param_name] = collector
-
-        for param_name, dep in param_info.loader_deps:
-            loader = self._resolve_dep(node, dep)
-            if loader is not None:
-                params[param_name] = loader
-
+        params = self._build_injected_params(
+            node, param_info,
+            parent=parent, ancestor_context=ancestor_context,
+            inject_collectors=True,
+        )
         result = method(**params)
-        while inspect.isawaitable(result):
+        if inspect.isawaitable(result):
             result = await result
         return result
 
@@ -619,278 +713,446 @@ class Resolver:
     # BFS traversal
     # ──────────────────────────────────────────────────────
 
-    async def _bfs_resolve(self, node: T) -> T:
-        """BFS resolve: level-by-level traversal with batched DataLoader calls."""
-        if isinstance(node, (list, tuple)):
+    async def _traverse(self, root: T) -> T:
+        """Two-phase iterative traversal.
+
+        Phase A (top-down): run resolve_* + auto-load level-by-level, setattr
+        immediately, collect children for the next level. No recursion — uses
+        an explicit ``levels`` list, so tree depth is bounded by heap, not by
+        ``sys.getrecursionlimit()``.
+
+        Phase B-1 (top-down): instantiate per-node Collectors and propagate
+        the collector snapshot to descendants.
+
+        Phase B-2 (bottom-up): run all post_* at a level concurrently via
+        ``asyncio.gather``, then post_default_handler serially per node, then
+        collect SendTo values into ancestor Collectors, then cleanup.
+
+        Replaces the recursive ``_process_level``. The split separates
+        resolve-time concerns (top-down data loading) from post-time concerns
+        (bottom-up aggregation) and lets Phase B-2 maximize post_* concurrency.
+        """
+        if isinstance(root, (list, tuple)):
             items = [
-                _WorkItem(n, parent=None, ancestor_context={},
-                          collector_snapshot={})
-                for n in node
+                _WorkItem(n, parent=None, ancestor_context={}, collector_snapshot={})
+                for n in root
                 if isinstance(n, BaseModel)
             ]
-        elif isinstance(node, BaseModel):
-            items = [_WorkItem(node, parent=None, ancestor_context={},
-                               collector_snapshot={})]
+        elif isinstance(root, BaseModel):
+            items = [_WorkItem(root, parent=None, ancestor_context={}, collector_snapshot={})]
         else:
-            return node
-        await self._process_level(items)
-        return node
+            return root
 
-    async def _process_level(self, items: list[_WorkItem]) -> None:
-        """Process all nodes at one BFS level."""
         if not items:
-            return
+            return root
 
-        type_meta, level_state = self._prepare_level(items)
-        resolve_results, next_level = await self._execute_resolves(level_state)
-        auto_loaded_fields = await self._batch_auto_load(level_state, next_level)
-        self._collect_existing_children(level_state, auto_loaded_fields, next_level)
-
-        if next_level:
-            await self._process_level(next_level)
-
-        for node, field_name, result in resolve_results:
-            setattr(node, field_name, result)
-
-        await self._execute_posts(level_state)
-        self._collect_send_to(level_state, type_meta)
-        self._cleanup_collectors(level_state)
-
-    def _prepare_level(
-        self, items: list[_WorkItem]
-    ) -> tuple[dict[type, _LevelMeta], _LevelState]:
-        """Phase 0: group by type, build ancestor context and collector snapshots."""
-        type_meta: dict[type, _LevelMeta] = {}
-        level_state: _LevelState = []
-
+        # Build level 0 inline (rather than via _init_level_nodes) to avoid
+        # 1k+ function calls on large root lists. Tuple layout matches _LevelNode.
+        level_0: list[_LevelNode] = []
         for item in items:
-            node = item.node
-            node_type = type(node)
-
-            if node_type not in type_meta:
-                meta = _get_class_meta(node_type)
-                expose_map = scan_expose_fields(node_type)
-                send_to_map = scan_send_to_fields(node_type)
-                type_meta[node_type] = (meta, expose_map, send_to_map)
+            meta = _get_class_meta(type(item.node))
+            if meta.expose_map:
+                new_ctx = dict(item.ancestor_context)
+                for field_name, alias in meta.expose_map.items():
+                    new_ctx[alias] = getattr(item.node, field_name, None)
             else:
-                meta, expose_map, send_to_map = type_meta[node_type]
+                new_ctx = item.ancestor_context
+            level_0.append((item, meta, new_ctx, _EMPTY_SNAPSHOT))
 
-            if expose_map:
-                new_ancestor_ctx = dict(item.ancestor_context)
-                for field_name, alias in expose_map.items():
-                    new_ancestor_ctx[alias] = getattr(node, field_name, None)
+        levels: list[list[_LevelNode]] = [level_0]
+        node_id_to_ln: dict[int, _LevelNode] = {
+            id(ln[0].node): ln for ln in level_0
+        }
+
+        await self._phase_a_resolve(levels, node_id_to_ln)
+        self._phase_b_prepare_collectors(levels, node_id_to_ln)
+        await self._phase_b_execute_posts(levels)
+
+        return root
+
+    def _init_level_nodes(self, items: list[_WorkItem]) -> list[_LevelNode]:
+        """Build _LevelNode wrappers for a level's work items.
+
+        Computes the new_ancestor_context (this node's ExposeAs values merged
+        into the inherited context). Collector snapshots stay empty here —
+        Phase B-1 fills them in before any post_*/SendTo needs them.
+        """
+        level: list[_LevelNode] = []
+        for item in items:
+            meta = _get_class_meta(type(item.node))
+
+            if meta.expose_map:
+                new_ctx = dict(item.ancestor_context)
+                for field_name, alias in meta.expose_map.items():
+                    new_ctx[alias] = getattr(item.node, field_name, None)
             else:
-                new_ancestor_ctx = item.ancestor_context
+                new_ctx = item.ancestor_context
 
-            if meta.collector_aliases:
-                node_collectors: dict[str, ICollector] = {
-                    alias: Collector(alias=alias, flat=flat)
-                    for alias, flat in meta.collector_aliases.items()
-                }
-                self._node_collectors[id(node)] = node_collectors
-                merged_collectors = dict(item.collector_snapshot)
-                merged_collectors.update(node_collectors)
-            else:
-                merged_collectors = item.collector_snapshot
+            level.append((item, meta, new_ctx, _EMPTY_SNAPSHOT))
+        return level
 
-            level_state.append((item, meta, new_ancestor_ctx, merged_collectors))
+    async def _phase_a_resolve(
+        self,
+        levels: list[list[_LevelNode]],
+        node_id_to_ln: dict[int, _LevelNode],
+    ) -> None:
+        """Phase A: top-down iterative resolve + auto-load.
 
-        return type_meta, level_state
+        Per level:
+          1. Collect resolve_* jobs across all nodes (gather for concurrency).
+          2. ``asyncio.gather`` all resolve_* coros; each does immediate
+             ``object.__setattr__`` so descendants see the new value.
+          3. Batch auto-load relationships (DataLoader.load_many per rel).
+          4. Build next level: children from resolve results, auto-load results,
+             AND pre-existing object fields — skipping any field already loaded
+             by steps 2/3 via ``loaded_field_keys`` (explicit dedup, replaces
+             the old "field still None" implicit dedup).
+        """
+        while True:
+            current = levels[-1]
 
-    async def _execute_resolves(
-        self, level_state: _LevelState
-    ) -> tuple[list[tuple[Any, str, Any]], list[_WorkItem]]:
-        """Phase 1: run all resolve_* methods concurrently and collect children."""
-        resolve_jobs: list[tuple[Any, str, dict[str, Any], dict[str, ICollector]]] = []
-        resolve_coros: list[Any] = []
+            # 1. Collect resolve jobs
+            resolve_jobs: list[tuple[_LevelNode, str, str]] = []
+            for ln in current:
+                _item, meta, _ctx, _snap = ln
+                for field_name, attr_name in meta.resolve_methods:
+                    resolve_jobs.append((ln, field_name, attr_name))
 
-        for item, meta, new_ancestor_ctx, merged_collectors in level_state:
-            node = item.node
-            for field_name, attr_name in meta.resolve_methods:
-                method = getattr(node, attr_name)
-                param_info = meta.resolve_params[attr_name]
-                resolve_coros.append(
-                    self._execute_resolve_method(
-                        node, method, param_info,
-                        parent=item.parent, ancestor_context=item.ancestor_context,
+            # 2. Execute resolves concurrently + immediate setattr
+            if resolve_jobs:
+                resolve_outputs = await asyncio.gather(
+                    *(
+                        self._do_resolve(ln, field_name, attr_name)
+                        for ln, field_name, attr_name in resolve_jobs
                     )
                 )
-                resolve_jobs.append((node, field_name, new_ancestor_ctx, merged_collectors))
+            else:
+                resolve_outputs = []
 
-        resolve_outputs = await asyncio.gather(*resolve_coros) if resolve_coros else []
+            # Track resolve_*-loaded fields for dedup in existing-fields scan
+            loaded_field_keys: set[tuple[int, str]] = set()
+            for ln, field_name, _ in resolve_jobs:
+                loaded_field_keys.add((id(ln[0].node), field_name))
 
-        resolve_results: list[tuple[Any, str, Any]] = []
-        next_level: list[_WorkItem] = []
+            # 3. Batch auto-load (immediate setattr, returns children + keys)
+            auto_children: list[_WorkItem] = []
+            auto_keys = await self._batch_auto_load(current, auto_children)
+            loaded_field_keys.update(auto_keys)
 
-        for (node, field_name, new_ancestor_ctx, merged_collectors), result in zip(
-            resolve_jobs, resolve_outputs, strict=True,
-        ):
-            resolve_results.append((node, field_name, result))
+            # 4. Build next level
+            next_items: list[_WorkItem] = []
 
-            if isinstance(result, (list, tuple)):
-                for r in result:
-                    if isinstance(r, BaseModel):
-                        next_level.append(_WorkItem(
-                            r, node, new_ancestor_ctx, merged_collectors,
+            # 4a. Children from resolve_* results
+            for (ln, _field_name, _attr_name), result in zip(
+                resolve_jobs, resolve_outputs, strict=True,
+            ):
+                _item, _meta, new_ctx, _snap = ln
+                parent_node = ln[0].node
+                if isinstance(result, (list, tuple)):
+                    for r in result:
+                        if isinstance(r, BaseModel):
+                            next_items.append(_WorkItem(
+                                r, parent_node, new_ctx, {},
+                            ))
+                elif isinstance(result, BaseModel):
+                    next_items.append(_WorkItem(
+                        result, parent_node, new_ctx, {},
+                    ))
+
+            # 4b. Children from auto-load
+            next_items.extend(auto_children)
+
+            # 4c. Children from pre-existing object fields (skip loaded)
+            for ln in current:
+                item, _meta, new_ctx, _snap = ln
+                node = item.node
+                node_id = id(node)
+                for field_name, is_list in self._get_traversable_fields(type(node)):
+                    if (node_id, field_name) in loaded_field_keys:
+                        continue
+                    val = getattr(node, field_name, None)
+                    if val is None:
+                        continue
+                    if is_list:
+                        for c in val:
+                            next_items.append(_WorkItem(
+                                c, node, new_ctx, {},
+                            ))
+                    else:
+                        next_items.append(_WorkItem(
+                            val, node, new_ctx, {},
                         ))
-            elif isinstance(result, BaseModel):
-                next_level.append(_WorkItem(
-                    result, node, new_ancestor_ctx, merged_collectors,
-                ))
 
-        return resolve_results, next_level
+            if not next_items:
+                break
+
+            next_level = self._init_level_nodes(next_items)
+            for ln in next_level:
+                node_id_to_ln[id(ln[0].node)] = ln
+            levels.append(next_level)
+
+    async def _do_resolve(
+        self,
+        ln: _LevelNode,
+        field_name: str,
+        attr_name: str,
+    ) -> Any:
+        """Execute one resolve_* method and immediately write the result.
+
+        Immediate setattr (vs the old deferred setattr that waited until after
+        the recursion returned) lets Phase A discard the ``resolve_results``
+        list and avoids the "field still None" implicit dedup. The cost is that
+        the existing-fields scan in ``_phase_a_resolve`` must explicitly skip
+        resolve_*-loaded fields via ``loaded_field_keys``.
+
+        ``object.__setattr__`` bypasses Pydantic's validation overhead — the
+        value type was already chosen by the user writing the resolve_* method.
+        """
+        item, meta, _ctx, _snap = ln
+        node = item.node
+        method = getattr(node, attr_name)
+        param_info = meta.resolve_params[attr_name]
+        result = await self._execute_resolve_method(
+            node, method, param_info,
+            parent=item.parent, ancestor_context=item.ancestor_context,
+        )
+        object.__setattr__(node, field_name, result)
+        return result
 
     def _get_traversable_fields(
         self, node_type: type,
-    ) -> list[tuple[str, bool]] | None:
+    ) -> list[tuple[str, bool]]:
         """Cache per-type: which fields can yield traversable children.
 
-        Returns list of (field_name, is_list) or None if no traversable fields.
+        Returns list of (field_name, is_list). Empty list means the type was
+        already scanned and has no traversable fields — caller iterates
+        harmlessly. Sentinel ``_MISSING`` (issue #77 B4) distinguishes
+        "not computed" from "computed to empty".
+
+        Shares the typing-unwrap logic with auto-load (``_extract_dto_cls``)
+        so ``Optional[X]``, ``X | None``, ``list[X] | None``, and
+        ``Annotated[X, ...]`` all traverse consistently. Issue #77 review
+        flagged the prior inline check that only recognized bare ``list[X]``
+        and bare ``X``.
         """
-        cached = self._traversable_fields_cache.get(node_type)
-        if cached is not None:
-            return cached if cached else None
+        cached = self._traversable_fields_cache.get(node_type, _MISSING)
+        if cached is not _MISSING:
+            return cached
 
         result: list[tuple[str, bool]] = []
         for field_name, field_info in node_type.model_fields.items():
-            anno = field_info.annotation
-            if anno is None:
+            extracted = Resolver._extract_dto_cls_and_cardinality(
+                field_info.annotation,
+            )
+            if extracted is None:
                 continue
-            origin = getattr(anno, "__origin__", None)
-            args = getattr(anno, "__args__", ())
-
-            if origin is list and args:
-                child_cls = args[0]
-                if isinstance(child_cls, type) and issubclass(child_cls, BaseModel):
-                    if _compute_should_traverse(child_cls):
-                        result.append((field_name, True))
-            elif isinstance(anno, type) and issubclass(anno, BaseModel):
-                if _compute_should_traverse(anno):
-                    result.append((field_name, False))
+            dto_cls, is_list = extracted
+            if _compute_should_traverse(dto_cls):
+                result.append((field_name, is_list))
 
         self._traversable_fields_cache[node_type] = result
-        return result if result else None
+        return result
 
-    def _collect_existing_children(
+    def _phase_b_prepare_collectors(
         self,
-        level_state: _LevelState,
-        auto_loaded_fields: set[tuple[int, str]],
-        next_level: list[_WorkItem],
+        levels: list[list[_LevelNode]],
+        node_id_to_ln: dict[int, _LevelNode],
     ) -> None:
-        """Collect existing object-field children (skip auto-loaded and non-traversable)."""
-        for item, _meta, new_ancestor_ctx, merged_collectors in level_state:
-            node = item.node
-            node_id = id(node)
-            traversable = self._get_traversable_fields(type(node))
-            if traversable is None:
-                continue
-            for field_name, is_list in traversable:
-                if (node_id, field_name) in auto_loaded_fields:
-                    continue
-                val = getattr(node, field_name, None)
-                if val is None:
-                    continue
-                if is_list:
-                    for c in val:
-                        next_level.append(_WorkItem(
-                            c, node, new_ancestor_ctx, merged_collectors,
-                        ))
-                else:
-                    next_level.append(_WorkItem(
-                        val, node, new_ancestor_ctx, merged_collectors,
-                    ))
+        """Phase B-1: top-down collector instantiation + snapshot propagation.
 
-    async def _execute_posts(self, level_state: _LevelState) -> None:
-        """Phase 3: run all post_* methods, then post_default_handler if present.
+        For each node, in BFS order (root → leaves):
+          1. Look up the parent's already-built collector_snapshot.
+          2. Instantiate this node's own Collectors (declared via Collector(...)
+             defaults on post_* / post_default_handler params).
+          3. Register own Collectors in ``_node_collectors`` for injection.
+          4. Build new level tuple with the merged snapshot so children
+             inherit the right Collector instances by reference.
 
-        post_default_handler runs after every post_* method at this level has
-        finished (so it can read fields populated by them) and is not
-        auto-assigned — its body sets fields manually. It shares the same
-        parameter injection as post_* (context / parent / ancestor_context /
-        Loader / Collector); by this point descendant SendTo values have
-        already populated ancestor Collectors (recursion precedes this phase).
+        Must run AFTER Phase A (so the tree is fully populated) and BEFORE
+        Phase B-2 (so post_default_handler / SendTo can find Collectors).
+
+        Tuples are immutable, so any snapshot change rebuilds the level entry.
+        For trees where no class declares Collectors (the common L1/L2 case)
+        every snapshot stays as ``_EMPTY_SNAPSHOT``, the fast path skips the
+        rebuild, and the entire phase is essentially free.
         """
-        for item, meta, _new_ancestor_ctx, _merged_collectors in level_state:
-            if not meta.post_methods:
-                continue
-            node = item.node
-            for field_name, attr_name in meta.post_methods:
-                method = getattr(node, attr_name)
-                param_info = meta.post_params[attr_name]
-                await self._bfs_post_and_set(
-                    node, field_name, method, param_info,
-                    parent=item.parent, ancestor_context=item.ancestor_context,
-                )
+        for depth in range(len(levels)):
+            old_level = levels[depth]
+            new_level: list[_LevelNode] | None = None  # lazily built on first change
 
-        for item, meta, _new_ancestor_ctx, _merged_collectors in level_state:
-            if meta.post_default_handler is None:
-                continue
-            attr_name, param_info = meta.post_default_handler
-            node = item.node
-            method = getattr(node, attr_name)
-            # Return value intentionally ignored — the handler sets fields itself.
-            await self._execute_post_method(
-                node, method, param_info,
-                parent=item.parent, ancestor_context=item.ancestor_context,
-            )
+            for idx, ln in enumerate(old_level):
+                item, meta, ctx, old_snap = ln
 
-    def _collect_send_to(
-        self, level_state: _LevelState, type_meta: dict[type, _LevelMeta]
-    ) -> None:
-        """Phase 4: collect SendTo values into ancestor collectors."""
-        for item, _meta, _new_ancestor_ctx, merged_collectors in level_state:
-            node_type = type(item.node)
-            _, _, send_to_map = type_meta[node_type]
-            if not send_to_map:
-                continue
-            node = item.node
-            for field_name, collector_names in send_to_map.items():
-                value = getattr(node, field_name, None)
-                if value is None:
+                if not meta.collector_aliases:
+                    # No own collectors — inherit parent snapshot by reference.
+                    parent_ln = (
+                        node_id_to_ln.get(id(item.parent))
+                        if item.parent is not None else None
+                    )
+                    new_snap = parent_ln[3] if parent_ln is not None else _EMPTY_SNAPSHOT
+                else:
+                    parent_ln = (
+                        node_id_to_ln.get(id(item.parent))
+                        if item.parent is not None else None
+                    )
+                    parent_snap = parent_ln[3] if parent_ln is not None else _EMPTY_SNAPSHOT
+
+                    own: dict[str, ICollector] = {
+                        alias: Collector(alias=alias, flat=flat)
+                        for alias, flat in meta.collector_aliases.items()
+                    }
+                    self._node_collectors[id(item.node)] = own
+                    if parent_snap:
+                        new_snap = dict(parent_snap)
+                        new_snap.update(own)
+                    else:
+                        new_snap = own
+
+                if new_snap is old_snap:
+                    # No change for this node — but if a previous node in this
+                    # level already triggered a rebuild, copy ln forward into
+                    # new_level so positions stay aligned.
+                    if new_level is not None:
+                        new_level.append(ln)
                     continue
-                if isinstance(collector_names, str):
-                    collector_names = (collector_names,)
-                for name in collector_names:
-                    collector = merged_collectors.get(name)
-                    if collector is not None:
-                        collector.add(value)
 
-    def _cleanup_collectors(self, level_state: _LevelState) -> None:
-        """Phase 5: remove per-node collector references."""
-        for item, meta, _new_ancestor_ctx, _merged_collectors in level_state:
-            if meta.collector_aliases:
-                self._node_collectors.pop(id(item.node), None)
+                # First change in this level → lazily copy everything seen so far.
+                if new_level is None:
+                    new_level = list(old_level[:idx])
+                new_ln = (item, meta, ctx, new_snap)
+                new_level.append(new_ln)
+                node_id_to_ln[id(item.node)] = new_ln
 
-    async def _bfs_post_and_set(
-        self,
-        node: Any,
-        trim_field: str,
-        method: Callable,
-        param_info: _MethodParamInfo,
-        *,
-        parent: Any,
-        ancestor_context: dict[str, Any],
-    ) -> None:
-        """Execute post method and set result on node (BFS mode)."""
-        result = await self._execute_post_method(
-            node, method, param_info,
-            parent=parent, ancestor_context=ancestor_context,
-        )
-        setattr(node, trim_field, result)
+            if new_level is not None:
+                levels[depth] = new_level
+
+    async def _phase_b_execute_posts(self, levels: list[list[_LevelNode]]) -> None:
+        """Phase B-2: bottom-up post execution + SendTo + cleanup.
+
+        For each level from leaves to root:
+          1. Collect all post_* coros across ALL nodes at this level into one
+             gather — same-level posts run concurrently (issue #77 A1).
+          2. setattr each post_* result.
+          3. Run post_default_handler serially per node (must read post_* fields).
+          4. Collect SendTo values from this level's nodes into ancestor
+             Collectors (bottom-up so descendant values reach ancestors).
+          5. Cleanup per-node Collectors (free ``_node_collectors`` entries).
+
+        Concurrent execution is safe because users do not rely on inter-post_*
+        ordering: ``meta.post_methods`` comes from ``dir()`` (alphabetical),
+        which was never a contract.
+        """
+        for depth in range(len(levels) - 1, -1, -1):
+            level = levels[depth]
+
+            # 1. Collect all post_* coros at this level (across all nodes).
+            # Single-pass also tracks whether any node declares SendTo or
+            # Collectors — lets steps 4/5 skip the per-node loop entirely on
+            # plain-data levels (the common L1/L2 case). At 1k+ nodes the
+            # saved function calls dominate the resolver-only timings.
+            post_jobs: list[tuple[_LevelNode, str]] = []
+            post_coros: list[Any] = []
+            has_async_post = False
+            level_has_send_to = False
+            level_has_collectors = False
+            level_has_default_handler = False
+            for ln in level:
+                item, meta, _ctx, _snap = ln
+                if meta.post_methods:
+                    node = item.node
+                    for field_name, attr_name in meta.post_methods:
+                        method = getattr(node, attr_name)
+                        if inspect.iscoroutinefunction(method):
+                            has_async_post = True
+                        param_info = meta.post_params[attr_name]
+                        post_coros.append(
+                            self._execute_post_method(
+                                node, method, param_info,
+                                parent=item.parent,
+                                ancestor_context=item.ancestor_context,
+                            )
+                        )
+                        post_jobs.append((ln, field_name))
+                if meta.send_to_map:
+                    level_has_send_to = True
+                if meta.collector_aliases:
+                    level_has_collectors = True
+                if meta.post_default_handler is not None:
+                    level_has_default_handler = True
+
+            # 2. Run + setattr results
+            #
+            # Fast path: when every post_* at this level is sync, awaiting the
+            # coros serially is much cheaper than asyncio.gather — gather pays
+            # ~30-50μs per Task creation/scheduling, which dominates when the
+            # post bodies themselves are O(1) (e.g. ``return self.a + self.b``).
+            #
+            # Slow path: if ANY post_* is async, gather so the awaits overlap
+            # (issue #77 A1).
+            if post_coros:
+                if has_async_post:
+                    post_results = await asyncio.gather(*post_coros)
+                else:
+                    post_results = [await coro for coro in post_coros]
+                for (post_ln, field_name), result in zip(
+                    post_jobs, post_results, strict=True,
+                ):
+                    object.__setattr__(post_ln[0].node, field_name, result)
+
+            # 3. post_default_handler per node, serially
+            if level_has_default_handler:
+                for ln in level:
+                    item, meta, _ctx, _snap = ln
+                    if meta.post_default_handler is None:
+                        continue
+                    attr_name, param_info = meta.post_default_handler
+                    node = item.node
+                    method = getattr(node, attr_name)
+                    # Return value intentionally ignored — handler sets fields itself.
+                    await self._execute_post_method(
+                        node, method, param_info,
+                        parent=item.parent,
+                        ancestor_context=item.ancestor_context,
+                    )
+
+            # 4. SendTo → ancestor Collectors (skip per-node loop when no class
+            # at this level declares any SendTo).
+            if level_has_send_to:
+                for ln in level:
+                    item, meta, _ctx, snap = ln
+                    if not meta.send_to_map:
+                        continue
+                    node = item.node
+                    for field_name, collector_names in meta.send_to_map.items():
+                        value = getattr(node, field_name, None)
+                        if value is None:
+                            continue
+                        for name in collector_names:
+                            collector = snap.get(name)
+                            if collector is not None:
+                                collector.add(value)
+
+            # 5. Cleanup per-node Collectors (skip when no class declares any).
+            if level_has_collectors:
+                for ln in level:
+                    item, meta, _ctx, _snap = ln
+                    if meta.collector_aliases:
+                        self._node_collectors.pop(id(item.node), None)
 
     async def _batch_auto_load(
         self,
-        level_state: list[tuple[_WorkItem, _ClassMeta, dict[str, Any], dict[str, ICollector]]],
-        next_level: list[_WorkItem],
+        level: list[_LevelNode],
+        auto_children: list[_WorkItem],
     ) -> set[tuple[int, str]]:
         """Batch auto-load relationships for all nodes at a level.
 
         Groups nodes by relationship, collects all FK values, uses load_many
-        for batched loading, then ORM→DTO conversion.  Appends child WorkItems
-        directly into *next_level*.
+        for batched loading, then ORM→DTO conversion. Appends child WorkItems
+        into *auto_children* (caller merges them into next_items).
 
         Returns set of (id(node), field_name) pairs that were auto-loaded,
-        so the caller can skip them in the existing-fields scan.
+        so ``_phase_a_resolve`` can skip them in the existing-fields scan
+        via ``loaded_field_keys``.
         """
         if self._registry is None:
             return set()
@@ -908,7 +1170,8 @@ class Resolver:
             tuple[type, str], list[tuple[int, Any, str, Any, Any, type[BaseModel] | None]]
         ] = {}
 
-        for idx, (item, meta, _new_ancestor_ctx, _merged_collectors) in enumerate(level_state):
+        for idx, ln in enumerate(level):
+            item, meta, _new_ctx, _snap = ln
             node = item.node
             auto_load_entries = self._scan_auto_load_fields(node, meta)
             if not auto_load_entries:
@@ -959,34 +1222,42 @@ class Resolver:
             # Map results back to nodes
             for j, (idx, node, field_name, dto_cls) in enumerate(valid_entries):
                 result = results[j]
-                item, meta, new_ancestor_ctx, merged_collectors = level_state[idx]
+                ln = level[idx]
+                _item, _meta, new_ctx, _snap = ln
 
                 if is_list:
                     items_list = result if result is not None else []
                     if dto_cls and items_list:
-                        items_list = [
-                            r if (is_custom and isinstance(r, BaseModel))
-                            else self._orm_to_dto(r, dto_cls)
-                            for r in items_list
-                        ]
-                    setattr(node, field_name, items_list)
+                        if is_custom:
+                            # CUSTOM rels may already yield BaseModels
+                            # (skip ORM→DTO for those, convert the rest)
+                            items_list = [
+                                r if isinstance(r, BaseModel)
+                                else self._orm_to_dto(r, dto_cls)
+                                for r in items_list
+                            ]
+                        else:
+                            items_list = [
+                                self._orm_to_dto(r, dto_cls)
+                                for r in items_list
+                            ]
+                    object.__setattr__(node, field_name, items_list)
                     auto_loaded.add((id(node), field_name))
                     for child in items_list:
                         if isinstance(child, BaseModel):
-                            next_level.append(_WorkItem(
-                                child, node, new_ancestor_ctx, merged_collectors,
+                            auto_children.append(_WorkItem(
+                                child, node, new_ctx, {},
                             ))
                 else:
                     if result is None:
                         continue
-                    if dto_cls:
-                        if not (is_custom and isinstance(result, BaseModel)):
-                            result = self._orm_to_dto(result, dto_cls)
-                    setattr(node, field_name, result)
+                    if dto_cls and not (is_custom and isinstance(result, BaseModel)):
+                        result = self._orm_to_dto(result, dto_cls)
+                    object.__setattr__(node, field_name, result)
                     auto_loaded.add((id(node), field_name))
                     if isinstance(result, BaseModel):
-                        next_level.append(_WorkItem(
-                            result, node, new_ancestor_ctx, merged_collectors,
+                        auto_children.append(_WorkItem(
+                            result, node, new_ctx, {},
                         ))
 
         return auto_loaded
@@ -1000,9 +1271,14 @@ class Resolver:
         Returns:
             The same node with all resolve_* and post_* fields populated.
         """
+        # Resolver is request-scoped by convention: each resolve() starts a
+        # fresh traversal with empty caches. Reusing a Resolver instance
+        # across requests is supported but pays the cache-clear cost on every
+        # call; long-lived resolvers that want cross-request caching should
+        # bypass this method and call _traverse directly. (issue #77 review)
         if self._registry is not None and hasattr(self._registry, "clear_cache"):
             self._registry.clear_cache()
         self._node_collectors.clear()
         self._loader_cache.clear()
-        await self._bfs_resolve(node)
+        await self._traverse(node)
         return node

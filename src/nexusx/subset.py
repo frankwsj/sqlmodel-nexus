@@ -607,9 +607,7 @@ class SubsetMeta(type):
                     new_fi.exclude = True
                     # Make auto-included FK fields optional with default None
                     if _is_fk_field(fi):
-                        from typing import Union as _Union
-
-                        _anno = _Union[_anno, type(None)]
+                        _anno = _anno | None
                         new_fi.default = None
                     field_definitions[field_name] = (_anno, new_fi)
 

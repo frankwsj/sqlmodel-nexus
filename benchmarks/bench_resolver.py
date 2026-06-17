@@ -415,6 +415,128 @@ async def bench_pydantic_l4():
 
 
 # ──────────────────────────────────────────────────────────
+# L5: post_* concurrency — 3 async post_* with sleep per sprint
+# Validates issue #77 A1: post_* methods at the same level must run
+# concurrently via asyncio.gather, not serially awaited.
+# ──────────────────────────────────────────────────────────
+
+
+class SprintSummaryHeavy(DefineSubset):
+    """Same shape as SprintSummary, but with 3 async post_* methods each
+    doing asyncio.sleep(0.005). Pre-refactor: serial await = ~15ms/sprint.
+    Post-refactor: gathered = ~5ms/level (across all sprints)."""
+
+    __subset__ = SubsetConfig(kls=Sprint, fields=["id", "name"])
+    tasks: list[TaskSummary] = []
+    derived_a: str = ""
+    derived_b: str = ""
+    derived_c: str = ""
+
+    async def post_derived_a(self):
+        await asyncio.sleep(0.005)
+        return f"a-{self.id}"
+
+    async def post_derived_b(self):
+        await asyncio.sleep(0.005)
+        return f"b-{self.id}"
+
+    async def post_derived_c(self):
+        await asyncio.sleep(0.005)
+        return f"c-{self.id}"
+
+
+async def bench_nexusx_l5():
+    """L5: 3 async post_* per sprint — post_* concurrency scenario."""
+    _ensure_resolver()
+    _, sf = _ensure_engine()
+    stmt = build_dto_select(SprintSummaryHeavy)
+    async with sf() as session:
+        rows = (await session.exec(stmt)).all()
+    dtos = [SprintSummaryHeavy(**dict(row._mapping)) for row in rows]
+    return await Resolver().resolve(dtos)
+
+
+async def bench_pydantic_l5():
+    """L5 baseline: simulates pre-refactor serial post_* execution.
+
+    For each sprint, awaits 3 sleeps SEQUENTIALLY (matching the recursive
+    _process_level behavior that awaited post_* one at a time). This gives
+    the "before refactor" wall-clock to compare against the post-refactor
+    concurrent execution in ``bench_nexusx_l5``.
+    """
+    _, sf = _ensure_engine()
+    stmt = select(Sprint).options(
+        selectinload(Sprint.tasks).selectinload(Task.owner)
+    )
+    async with sf() as session:
+        sprints = (await session.exec(stmt)).all()
+    result = []
+    for s in sprints:
+        # Sequential awaits — what pre-refactor nexusx did
+        await asyncio.sleep(0.005)
+        await asyncio.sleep(0.005)
+        await asyncio.sleep(0.005)
+        result.append(PSprintSummary(
+            id=s.id,
+            name=s.name,
+            tasks=[
+                PTaskSummary(
+                    id=t.id,
+                    title=t.title,
+                    sprint_id=t.sprint_id,
+                    owner_id=t.owner_id,
+                    done=t.done,
+                    owner=(
+                        PUserSummary(id=t.owner.id, name=t.owner.name)
+                        if t.owner
+                        else None
+                    ),
+                )
+                for t in s.tasks
+            ],
+        ))
+    return result
+
+
+# ──────────────────────────────────────────────────────────
+# L6: Deep tree — self-referential chain (validates issue #77 C1)
+# Pre-refactor: RecursionError around depth = sys.getrecursionlimit().
+# Post-refactor: iterative, depth bounded by heap only.
+# ──────────────────────────────────────────────────────────
+
+
+def build_deep_chain_dto(depth: int):
+    """Build a self-referential chain DTO of given depth.
+
+    Returns ``(ChainNodeCls, root_instance)``. Each node has one child via
+    ``children: list[ChainNode]``, forcing a new BFS level per depth.
+    """
+    class ChainNode(PydanticBaseModel):
+        id: int
+        children: list["ChainNode"] = []
+        label: str = ""
+
+        def post_label(self):
+            return f"n-{self.id}"
+
+    ChainNode.model_rebuild()
+
+    node = ChainNode(id=1)
+    for i in range(2, depth + 1):
+        node = ChainNode(id=i, children=[node])
+    return ChainNode, node
+
+
+async def bench_nexusx_l6(depth: int):
+    """L6: resolve a `depth`-deep chain. Pure-Pydantic (no DB), measures
+    only the resolver's traversal cost. Pre-refactor hits RecursionError;
+    post-refactor runs in linear time."""
+    _, root = build_deep_chain_dto(depth)
+    resolver = Resolver()
+    return await resolver.resolve(root)
+
+
+# ──────────────────────────────────────────────────────────
 # Runner
 # ──────────────────────────────────────────────────────────
 
@@ -426,6 +548,7 @@ SCENARIOS = [
     ("L2: 1-level relationship", bench_nexusx_l2, bench_pydantic_l2),
     ("L3: 2-level + derived fields", bench_nexusx_l3, bench_pydantic_l3),
     ("L4: Cross-layer data flow", bench_nexusx_l4, bench_pydantic_l4),
+    ("L5: post_* concurrency", bench_nexusx_l5, bench_pydantic_l5),
 ]
 
 SCALES = [
@@ -576,6 +699,58 @@ async def main():
             print_comparison(scenario_name, nx_times, pd_times)
 
         print()
+
+    # L6: deep tree (issue #77 C1 — recursion vs iteration)
+    # Not part of the scale loop: depth varies independently of task count.
+    await run_deep_tree_bench()
+
+
+async def run_deep_tree_bench():
+    """L6: measure nexusx Resolver traversal on deep self-referential chains.
+
+    Pre-refactor: hits RecursionError near depth = sys.getrecursionlimit() (~1000).
+    Post-refactor: iterative, completes all depths.
+    """
+    import sys
+
+    print(f"  ── Deep tree (recursive vs iterative, recursionlimit={sys.getrecursionlimit()}) ──")
+    print()
+    print(f"  {'Depth':<10s} {'Avg':>10s} {'P50':>10s} {'P95':>10s} {'Status':>15s}")
+    print(f"  {'─' * 58}")
+
+    for depth in (100, 500, 1000, 1500, 2000):
+        # Warmup
+        for _ in range(N_WARMUP):
+            try:
+                await bench_nexusx_l6(depth)
+            except RecursionError:
+                pass
+
+        times: list[float] = []
+        errors = 0
+        for _ in range(N_RUNS):
+            t0 = time.perf_counter()
+            try:
+                await bench_nexusx_l6(depth)
+                times.append(time.perf_counter() - t0)
+            except RecursionError:
+                errors += 1
+
+        if errors == N_RUNS:
+            label = "RecursionError"
+            print(f"  {depth:<10d} {'—':>10s} {'—':>10s} {'—':>10s} {label:>15s}")
+        elif errors > 0:
+            label = f"{errors}/{N_RUNS} fail"
+            print(f"  {depth:<10d} {'(flaky)':>10s} {'—':>10s} {'—':>10s} {label:>15s}")
+        else:
+            avg = mean(times)
+            p50 = quantiles(times, n=4)[0]
+            p95 = quantiles(times, n=20)[18]
+            print(
+                f"  {depth:<10d} {fmt_ms(avg):>10s} {fmt_ms(p50):>10s} "
+                f"{fmt_ms(p95):>10s} {'OK':>15s}"
+            )
+    print()
 
 
 if __name__ == "__main__":

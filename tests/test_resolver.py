@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated, Optional
 
 import pytest
 from pydantic import BaseModel
@@ -1118,3 +1119,227 @@ class TestResolverPostDefaultHandler:
         result = await Resolver().resolve(root)
         assert [r.doubled for r in result] == [2, 10, 20]
         assert [r.quadrupled for r in result] == [4, 20, 40]
+
+
+# ──────────────────────────────────────────────────────────
+# Test: two-phase iterative resolver (post_* concurrency + immediate setattr)
+# Regression coverage for the Phase A / Phase B refactor — see issue #77.
+# ──────────────────────────────────────────────────────────
+
+
+class TestResolverTwoPhase:
+    async def test_post_concurrent_execution(self):
+        """All post_* methods at the same level run concurrently via gather.
+
+        Serial: 10 nodes × 3 posts × 50ms = 1.5s
+        Concurrent (within node): 3 × 50ms gathered = 50ms per node
+        Concurrent (across nodes at same level): 10 × 50ms gathered = 50ms total
+        Asserting < 0.5s leaves headroom for slow CI.
+        """
+        import time
+
+        class HeavyPost(BaseModel):
+            id: int
+            a: str = ""
+            b: str = ""
+            c: str = ""
+
+            async def post_a(self):
+                await asyncio.sleep(0.05)
+                return f"a-{self.id}"
+
+            async def post_b(self):
+                await asyncio.sleep(0.05)
+                return f"b-{self.id}"
+
+            async def post_c(self):
+                await asyncio.sleep(0.05)
+                return f"c-{self.id}"
+
+        nodes = [HeavyPost(id=i) for i in range(10)]
+
+        t0 = time.perf_counter()
+        result = await Resolver().resolve(nodes)
+        elapsed = time.perf_counter() - t0
+
+        # 10 nodes × 3 posts × 0.05s = 1.5s serial. Concurrent ≤ 0.05s.
+        # Threshold 0.5s tolerates CI jitter while still failing on serial code.
+        assert elapsed < 0.5, (
+            f"post_* took {elapsed:.2f}s — expected concurrent (<0.5s), "
+            f"serial would be ~1.5s"
+        )
+        for i, node in enumerate(result):
+            assert node.a == f"a-{i}"
+            assert node.b == f"b-{i}"
+            assert node.c == f"c-{i}"
+
+    async def test_resolve_overwriting_field_does_not_double_traverse(self):
+        """When resolve_* populates a traversable field, the resolved children
+        must be queued for traversal exactly once.
+
+        With deferred setattr (pre-refactor) the existing-fields scan sees the
+        pre-resolve (empty) value, so the dedup is implicit. With immediate
+        setattr (post-refactor) the scan sees the new value — the resolver must
+        skip resolve_*-populated fields via an explicit loaded_field_keys set.
+        A regression here would run each child's post_* twice.
+        """
+        counter = {"n": 0}
+
+        class Child(BaseModel):
+            id: int
+            marker: int = 0
+
+            def post_marker(self):
+                counter["n"] += 1
+                return counter["n"]
+
+        class Parent(BaseModel):
+            children: list[Child] = []
+
+            def resolve_children(self):
+                return [Child(id=1), Child(id=2), Child(id=3)]
+
+        result = await Resolver().resolve(Parent())
+
+        assert len(result.children) == 3
+        assert counter["n"] == 3, (
+            f"post_marker ran {counter['n']} times, expected 3 "
+            "(children queued for traversal more than once)"
+        )
+
+
+# ──────────────────────────────────────────────────────────
+# Test: typing-shape compatibility for child traversal
+#   Regression for issue #77 review: _get_traversable_fields
+#   previously only recognized bare ``list[X]`` and bare ``X``,
+#   silently skipping ``X | None``, ``Optional[X]``,
+#   ``list[X] | None``, ``Annotated[X, ...]``.
+# ──────────────────────────────────────────────────────────
+
+
+class TestTypingShapeTraversal:
+    """Verify pre-existing (populated) child DTOs are traversed regardless
+    of how their annotation is spelled. The child's ``post_*`` must run."""
+
+    async def test_pep604_optional_child_traverses(self):
+        """``child: ChildDTO | None`` — PEP 604 union."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: ChildDTO | None = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_typing_optional_child_traverses(self):
+        """``child: Optional[ChildDTO]`` — legacy typing.Optional."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: Optional[ChildDTO] = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_annotated_child_traverses(self):
+        """``child: Annotated[ChildDTO, ...]`` — Pydantic strips the
+        Annotated wrapper at model creation, but the test guards against
+        any future regression in _extract_dto_cls_and_cardinality."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: Annotated[ChildDTO, "metadata"] = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_list_optional_child_traverses(self):
+        """``children: list[ChildDTO] | None`` — list-of-DTO wrapped in Optional."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            children: list[ChildDTO] | None = None
+
+        result = await Resolver().resolve(
+            ParentDTO(
+                id=1,
+                children=[ChildDTO(id=10, name="a"), ChildDTO(id=11, name="b")],
+            ),
+        )
+        assert result.children is not None
+        assert [c.derived for c in result.children] == ["d-a", "d-b"]
+
+    async def test_optional_child_none_not_traversed(self):
+        """``child: ChildDTO | None`` with child=None must not crash and
+        must leave child as None."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.id}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: ChildDTO | None = None
+
+        result = await Resolver().resolve(ParentDTO(id=1, child=None))
+        assert result.child is None
+
+    async def test_extract_dto_cls_and_cardinality_unit(self):
+        """Direct unit checks on the helper used by traversal and auto-load."""
+
+        class MyDTO(BaseModel):
+            x: int
+
+        assert Resolver._extract_dto_cls_and_cardinality(MyDTO) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(MyDTO | None) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(Optional[MyDTO]) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO]) == (MyDTO, True)
+        assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO] | None) == (MyDTO, True)
+        assert Resolver._extract_dto_cls_and_cardinality(Annotated[MyDTO, "x"]) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(int) is None
+        assert Resolver._extract_dto_cls_and_cardinality(int | None) is None
+        assert Resolver._extract_dto_cls_and_cardinality("ForwardRef") is None
