@@ -8,30 +8,30 @@
   L1: Field selection
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                   520us      393us      640us
-  nexusx DefineSubset            577us      558us      662us
-    vs Pydantic             +11.0%
+  Pydantic DTO                   329us      308us      411us
+  nexusx DefineSubset            300us      281us      369us
+    vs Pydantic             -8.8%
 
   L2: 1-level relationship
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  1.17ms      879us     1.61ms
-  nexusx DefineSubset           1.93ms     1.84ms     2.30ms
-    vs Pydantic             +65.4%
+  Pydantic DTO                  1.14ms      880us     1.81ms
+  nexusx DefineSubset           1.35ms     1.07ms     1.97ms
+    vs Pydantic             +18.4%
 
   L3: 2-level + derived fields
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  2.01ms     1.45ms     2.55ms
-  nexusx DefineSubset           2.04ms     1.70ms     2.98ms
-    vs Pydantic             +1.4%
+  Pydantic DTO                  1.56ms     1.36ms     2.38ms
+  nexusx DefineSubset           2.31ms     1.72ms     3.38ms
+    vs Pydantic             +48.5%
 
   L4: Cross-layer data flow
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  2.10ms     1.39ms     1.71ms
-  nexusx DefineSubset           1.79ms     1.73ms     2.12ms
-    vs Pydantic             -14.8%
+  Pydantic DTO                  2.18ms     1.40ms     2.85ms
+  nexusx DefineSubset           2.25ms     1.78ms     3.22ms
+    vs Pydantic             +3.3%
 
 
   ── Medium scale (20 users, 10 sprints, 200 tasks) ──
@@ -42,30 +42,30 @@
   L1: Field selection
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                   481us      384us      803us
-  nexusx DefineSubset            348us      314us      693us
-    vs Pydantic             -27.7%
+  Pydantic DTO                   698us      731us      871us
+  nexusx DefineSubset            641us      618us      717us
+    vs Pydantic             -8.2%
 
   L2: 1-level relationship
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  4.28ms     2.39ms     4.62ms
-  nexusx DefineSubset           3.48ms     2.47ms     5.28ms
-    vs Pydantic             -18.6%
+  Pydantic DTO                  3.27ms     2.30ms     4.14ms
+  nexusx DefineSubset           2.76ms     2.27ms     4.84ms
+    vs Pydantic             -15.5%
 
   L3: 2-level + derived fields
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  4.73ms     3.30ms     7.34ms
-  nexusx DefineSubset           6.97ms     3.78ms    20.73ms
-    vs Pydantic             +47.5%
+  Pydantic DTO                  4.45ms     3.21ms     6.27ms
+  nexusx DefineSubset           5.79ms     3.53ms    20.01ms
+    vs Pydantic             +30.1%
 
   L4: Cross-layer data flow
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                  4.96ms     3.52ms    18.96ms
-  nexusx DefineSubset           4.73ms     3.76ms     7.40ms
-    vs Pydantic             -4.7%
+  Pydantic DTO                  5.99ms     3.52ms    22.63ms
+  nexusx DefineSubset           5.99ms     3.76ms     7.45ms
+    vs Pydantic             -0.0%
 
 
   ── Large scale (50 users, 20 sprints, 1000 tasks) ──
@@ -73,29 +73,29 @@
   L1: Field selection
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                   967us      621us     1.29ms
-  nexusx DefineSubset            778us      754us      853us
-    vs Pydantic             -19.6%
+  Pydantic DTO                   622us      607us      661us
+  nexusx DefineSubset            392us      374us      452us
+    vs Pydantic             -37.0%
 
   L2: 1-level relationship
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                 16.50ms     8.29ms    46.49ms
-  nexusx DefineSubset          13.38ms     7.49ms    44.30ms
-    vs Pydantic             -18.9%
+  Pydantic DTO                 16.67ms     8.36ms    51.82ms
+  nexusx DefineSubset          17.23ms    10.97ms    49.27ms
+    vs Pydantic             +3.4%
 
   L3: 2-level + derived fields
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                 20.64ms    11.07ms    52.20ms
-  nexusx DefineSubset          22.80ms    11.95ms    57.12ms
-    vs Pydantic             +10.5%
+  Pydantic DTO                 21.38ms    11.19ms    50.93ms
+  nexusx DefineSubset          22.92ms    12.61ms    56.95ms
+    vs Pydantic             +7.2%
 
   L4: Cross-layer data flow
   Method                           Avg        P50        P95
   ──────────────────────────────────────────────────────────
-  Pydantic DTO                 21.47ms    12.04ms    54.20ms
-  nexusx DefineSubset          20.28ms    12.16ms    51.87ms
-    vs Pydantic             -5.5%
+  Pydantic DTO                 21.87ms    12.07ms    54.64ms
+  nexusx DefineSubset          20.38ms    11.87ms    51.09ms
+    vs Pydantic             -6.8%
 
 
