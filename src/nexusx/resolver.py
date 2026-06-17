@@ -61,6 +61,11 @@ T = TypeVar("T", bound=BaseModel | list[BaseModel] | tuple[BaseModel, ...])
 # is a valid cached result; only the sentinel means "absent".
 _MISSING: Any = object()
 
+# Shared empty-dict sentinel for _LevelNode.collector_snapshot default.
+# Treated as read-only — Phase B-1 replaces it with a fresh dict when a node
+# actually has Collectors to merge, never mutates in place.
+_EMPTY_SNAPSHOT: dict[str, ICollector] = {}
+
 
 # ──────────────────────────────────────────────────────────
 # BFS work item
@@ -153,14 +158,21 @@ class _ClassMeta:
     # Whether this class or any descendant needs traversal.
     # None = not yet computed; True/False = computed result.
     should_traverse: bool | None = None
+    # Cached scans of ExposeAs / SendTo annotations on this class. Hoisted
+    # out of the per-node hot path; lookup once per class, not per instance.
+    expose_map: dict[str, str] = field(default_factory=dict)
+    send_to_map: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class _LevelNode:
     """A node being processed at a BFS level, with pre-computed context.
 
     Replaces the old 4-tuple ``_LevelState`` entry. Field access via named
     attributes is clearer than positional unpacking across 7+ consumer methods.
+
+    ``slots=True`` shrinks per-instance memory and speeds attribute access —
+    matters at 1k+ nodes per level where allocation cost dominates.
     """
 
     item: _WorkItem
@@ -169,8 +181,11 @@ class _LevelNode:
     # values from this node already merged in).
     new_ancestor_context: dict[str, Any]
     # Per-node collector snapshot — filled by Phase B-1, propagated to children.
-    # Empty dict during Phase A; Phase B-1 populates it before any post_*/SendTo.
-    collector_snapshot: dict[str, ICollector] = field(default_factory=dict)
+    # Defaults to the shared ``_EMPTY_SNAPSHOT`` sentinel so classes without
+    # Collectors don't pay a dict allocation per node (matters at 1k+ scale).
+    collector_snapshot: dict[str, ICollector] = field(
+        default_factory=lambda: _EMPTY_SNAPSHOT,
+    )
 
 
 def _analyze_method_params(
@@ -267,6 +282,11 @@ def _get_class_meta(kls: type) -> _ClassMeta:
     if cached is not None:
         return cached
     meta = _build_class_meta(kls)
+    # Hoist per-class annotation scans onto meta so the per-node hot path
+    # in _init_level_nodes / _collect_send_to_for_node doesn't re-walk
+    # model_fields for every instance.
+    meta.expose_map = scan_expose_fields(kls)
+    meta.send_to_map = scan_send_to_fields(kls)
     _class_meta_cache[kls] = meta
     return meta
 
@@ -721,13 +741,11 @@ class Resolver:
         """
         level: list[_LevelNode] = []
         for item in items:
-            node_type = type(item.node)
-            meta = _get_class_meta(node_type)
-            expose_map = scan_expose_fields(node_type)
+            meta = _get_class_meta(type(item.node))
 
-            if expose_map:
+            if meta.expose_map:
                 new_ctx = dict(item.ancestor_context)
-                for field_name, alias in expose_map.items():
+                for field_name, alias in meta.expose_map.items():
                     new_ctx[alias] = getattr(item.node, field_name, None)
             else:
                 new_ctx = item.ancestor_context
@@ -736,7 +754,6 @@ class Resolver:
                 item=item,
                 meta=meta,
                 new_ancestor_context=new_ctx,
-                collector_snapshot={},
             ))
         return level
 
@@ -914,26 +931,45 @@ class Resolver:
 
         Must run AFTER Phase A (so the tree is fully populated) and BEFORE
         Phase B-2 (so post_default_handler / SendTo can find Collectors).
+
+        Hot path: when neither this node nor any ancestor declares Collectors,
+        ``ln.collector_snapshot`` stays as the shared ``_EMPTY_SNAPSHOT``
+        sentinel — no dict allocation. Matters at 1k+ node scale (L2 Large:
+        1000 task nodes × 0 collectors = 1000 saved allocations).
         """
         for depth in range(len(levels)):
             for ln in levels[depth]:
+                if not ln.meta.collector_aliases:
+                    # No own collectors — inherit parent snapshot by reference.
+                    # Sentinel propagates through the whole tree for free.
+                    parent_ln = (
+                        node_id_to_ln.get(id(ln.item.parent))
+                        if ln.item.parent is not None else None
+                    )
+                    if parent_ln is not None:
+                        ln.collector_snapshot = parent_ln.collector_snapshot
+                    # else: leave default _EMPTY_SNAPSHOT
+                    continue
+
                 parent_ln = (
                     node_id_to_ln.get(id(ln.item.parent))
                     if ln.item.parent is not None else None
                 )
-                parent_snapshot = parent_ln.collector_snapshot if parent_ln else {}
+                parent_snapshot = (
+                    parent_ln.collector_snapshot if parent_ln else _EMPTY_SNAPSHOT
+                )
 
-                if ln.meta.collector_aliases:
-                    own: dict[str, ICollector] = {
-                        alias: Collector(alias=alias, flat=flat)
-                        for alias, flat in ln.meta.collector_aliases.items()
-                    }
-                    self._node_collectors[id(ln.item.node)] = own
+                own: dict[str, ICollector] = {
+                    alias: Collector(alias=alias, flat=flat)
+                    for alias, flat in ln.meta.collector_aliases.items()
+                }
+                self._node_collectors[id(ln.item.node)] = own
+                if parent_snapshot:
                     merged = dict(parent_snapshot)
                     merged.update(own)
                     ln.collector_snapshot = merged
                 else:
-                    ln.collector_snapshot = dict(parent_snapshot)
+                    ln.collector_snapshot = own
 
     async def _phase_b_execute_posts(self, levels: list[list[_LevelNode]]) -> None:
         """Phase B-2: bottom-up post execution + SendTo + cleanup.
@@ -1022,14 +1058,14 @@ class Resolver:
         """Phase B-2 step: collect this node's SendTo values into the ancestor
         Collectors referenced by ``ln.collector_snapshot``.
 
-        ``scan_send_to_fields`` caches per-type, so this is cheap. Runs after
-        post_* + post_default_handler so SendTo can pick up derived fields.
+        Uses the cached send_to_map from class meta so the hot path is a
+        single dict lookup. Runs after post_* + post_default_handler so
+        SendTo can pick up derived fields.
         """
-        node = ln.item.node
-        send_to_map = scan_send_to_fields(type(node))
-        if not send_to_map:
+        if not ln.meta.send_to_map:
             return
-        for field_name, collector_names in send_to_map.items():
+        node = ln.item.node
+        for field_name, collector_names in ln.meta.send_to_map.items():
             value = getattr(node, field_name, None)
             if value is None:
                 continue
