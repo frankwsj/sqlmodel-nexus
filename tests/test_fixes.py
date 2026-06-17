@@ -143,7 +143,7 @@ class TestContextScanCaching:
         result1 = scan_send_to_fields(CollectedModel)
         result2 = scan_send_to_fields(CollectedModel)
 
-        assert result1 == {"owner": "contributors"}
+        assert result1 == {"owner": ("contributors",)}
         assert result1 is result2  # Same object from cache
 
 

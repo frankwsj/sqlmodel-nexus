@@ -469,7 +469,7 @@ class TestSubsetConfig:
 
         send_to = scan_send_to_fields(UserSub)
         assert "email" in send_to
-        assert send_to["email"] == "email_collector"
+        assert send_to["email"] == ("email_collector",)
 
     def test_config_with_send_to_tuple(self):
         """send_to with tuple of collector names."""
@@ -485,7 +485,7 @@ class TestSubsetConfig:
             )
 
         send_to = scan_send_to_fields(UserSub)
-        assert send_to["email"] == ("col_a", "col_b")
+        assert send_to["email"] == ("col_a", "col_b")  # already a tuple
 
     def test_config_fields_and_omit_exclusive(self):
         """fields + omit_fields both specified should raise ValueError."""

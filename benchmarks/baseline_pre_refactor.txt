@@ -1,0 +1,101 @@
+============================================================
+  DefineSubset + Resolver vs Pydantic DTO
+  Database: SQLite in-memory
+============================================================
+
+  ── Small scale (5 users, 3 sprints, 15 tasks) ──
+
+  L1: Field selection
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                   520us      393us      640us
+  nexusx DefineSubset            577us      558us      662us
+    vs Pydantic             +11.0%
+
+  L2: 1-level relationship
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  1.17ms      879us     1.61ms
+  nexusx DefineSubset           1.93ms     1.84ms     2.30ms
+    vs Pydantic             +65.4%
+
+  L3: 2-level + derived fields
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  2.01ms     1.45ms     2.55ms
+  nexusx DefineSubset           2.04ms     1.70ms     2.98ms
+    vs Pydantic             +1.4%
+
+  L4: Cross-layer data flow
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  2.10ms     1.39ms     1.71ms
+  nexusx DefineSubset           1.79ms     1.73ms     2.12ms
+    vs Pydantic             -14.8%
+
+
+  ── Medium scale (20 users, 10 sprints, 200 tasks) ──
+
+  Verifying result equivalence...
+  Correctness verification: PASSED
+
+  L1: Field selection
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                   481us      384us      803us
+  nexusx DefineSubset            348us      314us      693us
+    vs Pydantic             -27.7%
+
+  L2: 1-level relationship
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  4.28ms     2.39ms     4.62ms
+  nexusx DefineSubset           3.48ms     2.47ms     5.28ms
+    vs Pydantic             -18.6%
+
+  L3: 2-level + derived fields
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  4.73ms     3.30ms     7.34ms
+  nexusx DefineSubset           6.97ms     3.78ms    20.73ms
+    vs Pydantic             +47.5%
+
+  L4: Cross-layer data flow
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                  4.96ms     3.52ms    18.96ms
+  nexusx DefineSubset           4.73ms     3.76ms     7.40ms
+    vs Pydantic             -4.7%
+
+
+  ── Large scale (50 users, 20 sprints, 1000 tasks) ──
+
+  L1: Field selection
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                   967us      621us     1.29ms
+  nexusx DefineSubset            778us      754us      853us
+    vs Pydantic             -19.6%
+
+  L2: 1-level relationship
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                 16.50ms     8.29ms    46.49ms
+  nexusx DefineSubset          13.38ms     7.49ms    44.30ms
+    vs Pydantic             -18.9%
+
+  L3: 2-level + derived fields
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                 20.64ms    11.07ms    52.20ms
+  nexusx DefineSubset          22.80ms    11.95ms    57.12ms
+    vs Pydantic             +10.5%
+
+  L4: Cross-layer data flow
+  Method                           Avg        P50        P95
+  ──────────────────────────────────────────────────────────
+  Pydantic DTO                 21.47ms    12.04ms    54.20ms
+  nexusx DefineSubset          20.28ms    12.16ms    51.87ms
+    vs Pydantic             -5.5%
+
+
