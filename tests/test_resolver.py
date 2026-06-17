@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated, Optional
 
 import pytest
 from pydantic import BaseModel
@@ -1205,3 +1206,140 @@ class TestResolverTwoPhase:
             f"post_marker ran {counter['n']} times, expected 3 "
             "(children queued for traversal more than once)"
         )
+
+
+# ──────────────────────────────────────────────────────────
+# Test: typing-shape compatibility for child traversal
+#   Regression for issue #77 review: _get_traversable_fields
+#   previously only recognized bare ``list[X]`` and bare ``X``,
+#   silently skipping ``X | None``, ``Optional[X]``,
+#   ``list[X] | None``, ``Annotated[X, ...]``.
+# ──────────────────────────────────────────────────────────
+
+
+class TestTypingShapeTraversal:
+    """Verify pre-existing (populated) child DTOs are traversed regardless
+    of how their annotation is spelled. The child's ``post_*`` must run."""
+
+    async def test_pep604_optional_child_traverses(self):
+        """``child: ChildDTO | None`` — PEP 604 union."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: ChildDTO | None = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_typing_optional_child_traverses(self):
+        """``child: Optional[ChildDTO]`` — legacy typing.Optional."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: Optional[ChildDTO] = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_annotated_child_traverses(self):
+        """``child: Annotated[ChildDTO, ...]`` — Pydantic strips the
+        Annotated wrapper at model creation, but the test guards against
+        any future regression in _extract_dto_cls_and_cardinality."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: Annotated[ChildDTO, "metadata"] = None
+
+        result = await Resolver().resolve(
+            ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),
+        )
+        assert result.child is not None
+        assert result.child.derived == "d-kid"
+
+    async def test_list_optional_child_traverses(self):
+        """``children: list[ChildDTO] | None`` — list-of-DTO wrapped in Optional."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            name: str = ""
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.name}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            children: list[ChildDTO] | None = None
+
+        result = await Resolver().resolve(
+            ParentDTO(
+                id=1,
+                children=[ChildDTO(id=10, name="a"), ChildDTO(id=11, name="b")],
+            ),
+        )
+        assert result.children is not None
+        assert [c.derived for c in result.children] == ["d-a", "d-b"]
+
+    async def test_optional_child_none_not_traversed(self):
+        """``child: ChildDTO | None`` with child=None must not crash and
+        must leave child as None."""
+
+        class ChildDTO(BaseModel):
+            id: int
+            derived: str = ""
+
+            def post_derived(self):
+                return f"d-{self.id}"
+
+        class ParentDTO(BaseModel):
+            id: int
+            child: ChildDTO | None = None
+
+        result = await Resolver().resolve(ParentDTO(id=1, child=None))
+        assert result.child is None
+
+    async def test_extract_dto_cls_and_cardinality_unit(self):
+        """Direct unit checks on the helper used by traversal and auto-load."""
+
+        class MyDTO(BaseModel):
+            x: int
+
+        assert Resolver._extract_dto_cls_and_cardinality(MyDTO) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(MyDTO | None) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(Optional[MyDTO]) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO]) == (MyDTO, True)
+        assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO] | None) == (MyDTO, True)
+        assert Resolver._extract_dto_cls_and_cardinality(Annotated[MyDTO, "x"]) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(int) is None
+        assert Resolver._extract_dto_cls_and_cardinality(int | None) is None
+        assert Resolver._extract_dto_cls_and_cardinality("ForwardRef") is None

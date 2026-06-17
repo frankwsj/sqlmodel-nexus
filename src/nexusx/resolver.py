@@ -509,36 +509,63 @@ class Resolver:
 
     @staticmethod
     def _do_extract_dto_cls(anno: Any) -> type[BaseModel] | None:
-        """Actual type extraction logic (uncached)."""
-        # Resolve string annotations from __future__ import annotations
+        """Actual type extraction logic (uncached).
+
+        Returns None for string annotations (from ``__future__ import
+        annotations`` or unresolved forward refs) — callers must invoke
+        ``model_rebuild()`` before traversal if such fields need to be
+        followed. Returning None here is a silent degradation path, not
+        a crash, so users who forget to rebuild simply see missing
+        descendants rather than a confusing error.
+        """
+        extracted = Resolver._extract_dto_cls_and_cardinality(anno)
+        return extracted[0] if extracted is not None else None
+
+    @staticmethod
+    def _extract_dto_cls_and_cardinality(
+        anno: Any,
+    ) -> tuple[type[BaseModel], bool] | None:
+        """Extract ``(dto_cls, is_list)`` from an annotation.
+
+        Handles ``Annotated[X, ...]``, ``Optional[X]`` / ``X | None``
+        (PEP 604 unions), and ``list[X]`` wrappers. ``is_list`` is True
+        only when the unwrapped annotation was syntactically a list
+        (``list[X]``, ``list[X] | None``); single-model fields always
+        return ``False``.
+
+        Returns ``None`` when the annotation does not refer to a single
+        BaseModel subclass (e.g. scalars, bare ``None``, unions of two
+        non-None types).
+        """
         if isinstance(anno, str):
             return None
 
-        # Unwrap Annotated
+        # Unwrap Annotated[X, ...] → X
         origin = get_origin(anno)
         if origin is typing.Annotated:
             anno = get_args(anno)[0]
             origin = get_origin(anno)
 
-        # Unwrap Optional (Union[X, None])
-        if origin is type(None):
-            return None
+        # Unwrap Optional / Union[X, None] → X when exactly one non-None arm.
+        # ``origin is not list`` guards against misinterpreting ``list[X]``'s
+        # own __args__ as a union.
         args = get_args(anno)
-        if args:
+        if args and origin is not list:
             non_none = [a for a in args if a is not type(None)]
             if len(non_none) == 1 and len(args) > 1:
                 anno = non_none[0]
                 origin = get_origin(anno)
 
-        # Unwrap list
+        # Unwrap list[X] → X, remember cardinality
+        is_list = False
         if origin is list:
+            is_list = True
             args = get_args(anno)
             if args:
                 anno = args[0]
 
-        # Check if it's a BaseModel subclass
         if isinstance(anno, type) and issubclass(anno, BaseModel):
-            return anno
+            return anno, is_list
         return None
 
     @staticmethod
@@ -572,6 +599,12 @@ class Resolver:
         if subset_fields is None:
             return dto_cls.model_validate(orm_instance)
 
+        # Skip None values: subset-generated DTOs give every extra field a
+        # default, so omitting a key is equivalent to using its default — and
+        # keeps "DB NULL" indistinguishable from "field absent on the DTO",
+        # which is the desired behavior for read-side projections. If a future
+        # use case needs to distinguish NULL from default, this is the line
+        # to revisit (issue #77 review).
         kwargs = {f: v for f in subset_fields if (v := getattr(orm_instance, f, None)) is not None}
         try:
             return dto_cls(**kwargs)
@@ -895,6 +928,12 @@ class Resolver:
         already scanned and has no traversable fields — caller iterates
         harmlessly. Sentinel ``_MISSING`` (issue #77 B4) distinguishes
         "not computed" from "computed to empty".
+
+        Shares the typing-unwrap logic with auto-load (``_extract_dto_cls``)
+        so ``Optional[X]``, ``X | None``, ``list[X] | None``, and
+        ``Annotated[X, ...]`` all traverse consistently. Issue #77 review
+        flagged the prior inline check that only recognized bare ``list[X]``
+        and bare ``X``.
         """
         cached = self._traversable_fields_cache.get(node_type, _MISSING)
         if cached is not _MISSING:
@@ -902,20 +941,14 @@ class Resolver:
 
         result: list[tuple[str, bool]] = []
         for field_name, field_info in node_type.model_fields.items():
-            anno = field_info.annotation
-            if anno is None:
+            extracted = Resolver._extract_dto_cls_and_cardinality(
+                field_info.annotation,
+            )
+            if extracted is None:
                 continue
-            origin = getattr(anno, "__origin__", None)
-            args = getattr(anno, "__args__", ())
-
-            if origin is list and args:
-                child_cls = args[0]
-                if isinstance(child_cls, type) and issubclass(child_cls, BaseModel):
-                    if _compute_should_traverse(child_cls):
-                        result.append((field_name, True))
-            elif isinstance(anno, type) and issubclass(anno, BaseModel):
-                if _compute_should_traverse(anno):
-                    result.append((field_name, False))
+            dto_cls, is_list = extracted
+            if _compute_should_traverse(dto_cls):
+                result.append((field_name, is_list))
 
         self._traversable_fields_cache[node_type] = result
         return result
@@ -1238,6 +1271,11 @@ class Resolver:
         Returns:
             The same node with all resolve_* and post_* fields populated.
         """
+        # Resolver is request-scoped by convention: each resolve() starts a
+        # fresh traversal with empty caches. Reusing a Resolver instance
+        # across requests is supported but pays the cache-clear cost on every
+        # call; long-lived resolvers that want cross-request caching should
+        # bypass this method and call _traverse directly. (issue #77 review)
         if self._registry is not None and hasattr(self._registry, "clear_cache"):
             self._registry.clear_cache()
         self._node_collectors.clear()
