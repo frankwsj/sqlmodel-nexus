@@ -65,27 +65,27 @@ Single-project library layout:
 
 ### Tests for User Story 1 (write FIRST, ensure they FAIL)
 
-- [ ] T009 [P] [US1] Test scalar/container type mapping in `tests/use_case/test_compose_schema.py` (assert `int→Int!`, `list[T]→[T!]!`, `Optional[T]→T`, etc., per contracts/schema-builder.md B3)
-- [ ] T010 [P] [US1] Test `FromContext` parameters are filtered out of method args in `tests/use_case/test_compose_schema.py`
-- [ ] T011 [P] [US1] Test same DTO referenced from multiple services is registered once in `tests/use_case/test_compose_schema.py`
-- [ ] T012 [P] [US1] Test `@query` and `@mutation` coexistence generates both root types in `tests/use_case/test_compose_schema.py`
-- [ ] T013 [P] [US1] Test name conflict detection (duplicate service / method / type) raises correct `ComposeSchemaError` subclass in `tests/use_case/test_compose_schema.py`
-- [ ] T014 [P] [US1] Test missing return annotation raises `MissingReturnAnnotationError` in `tests/use_case/test_compose_schema.py`
-- [ ] T015 [P] [US1] Test DTO field referencing SQLModel raises `SQLModelInDtoFieldError` in `tests/use_case/test_compose_schema.py`
-- [ ] T016 [P] [US1] Test introspection JSON round-trips through `graphql.build_schema(...)` (GraphiQL compat) in `tests/use_case/test_compose_schema.py`
+- [X] T009 [P] [US1] Test scalar/container type mapping in `tests/use_case/test_compose_schema.py` (assert `int→Int!`, `list[T]→[T!]!`, `Optional[T]→T`, etc., per contracts/schema-builder.md B3)
+- [X] T010 [P] [US1] Test `FromContext` parameters are filtered out of method args in `tests/use_case/test_compose_schema.py`
+- [X] T011 [P] [US1] Test same DTO referenced from multiple services is registered once in `tests/use_case/test_compose_schema.py`
+- [X] T012 [P] [US1] Test `@query` and `@mutation` coexistence generates both root types in `tests/use_case/test_compose_schema.py`
+- [X] T013 [P] [US1] Test name conflict detection (duplicate service / method / type) raises correct `ComposeSchemaError` subclass in `tests/use_case/test_compose_schema.py`
+- [X] T014 [P] [US1] Test missing return annotation raises `MissingReturnAnnotationError` in `tests/use_case/test_compose_schema.py`
+- [X] T015 [P] [US1] Test DTO field referencing SQLModel raises `SQLModelInDtoFieldError` in `tests/use_case/test_compose_schema.py`
+- [X] T016 [P] [US1] Test introspection JSON round-trips through `graphql.build_schema(...)` (GraphiQL compat) in `tests/use_case/test_compose_schema.py`
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement `build_compose_schema(app: UseCaseAppConfig) -> ComposeSchema` skeleton in `src/nexusx/use_case/compose_schema.py` (orchestrates T018–T022)
-- [ ] T018 [US1] Implement service iteration + `{Service}Query` / `{Service}Mutation` type construction in `build_compose_schema` (per data-model.md D5, contracts/schema-builder.md B6)
-- [ ] T019 [US1] Implement method → field conversion (extract args via `inspect.signature`, skip `cls` and `is_from_context_annotation`, build `ArgumentInfo` with defaults) in `build_compose_schema`
-- [ ] T020 [US1] Implement recursive DTO/enum registration with dedup (use `id(python_class)` to detect same class; raise `DuplicateTypeError` on different-class-same-name) in `build_compose_schema`
-- [ ] T021 [US1] Implement root `Query` (and optional `Mutation`) type assembly in `build_compose_schema`
-- [ ] T022 [US1] Implement name conflict detection (service-level, method-level, type-level) at schema-build time in `build_compose_schema`
-- [ ] T023 [P] [US1] Implement `ComposeSchema.render_sdl()` in `src/nexusx/use_case/compose_schema.py` (per contracts/schema-builder.md B7 ordering: scalars → enums → DTOs → service types → root Query/Mutation)
-- [ ] T024 [P] [US1] Implement `ComposeSchema.render_introspection()` in `src/nexusx/use_case/compose_schema.py` (returns `__schema` payload; must pass T016 round-trip test)
-- [ ] T025 [P] [US1] Implement `ComposeSchema.render_method_sdl(service_name, method_name)` in `src/nexusx/use_case/compose_schema.py` (returns method signature + transitive closure of return type)
-- [ ] T026 [US1] Run US1 tests, ensure all pass: `uv run pytest tests/use_case/test_compose_schema.py -v`
+- [X] T017 [US1] Implement `build_compose_schema(app: UseCaseAppConfig) -> ComposeSchema` skeleton in `src/nexusx/use_case/compose_schema.py` (orchestrates T018–T022)
+- [X] T018 [US1] Implement service iteration + `{Service}Query` / `{Service}Mutation` type construction in `build_compose_schema` (per data-model.md D5, contracts/schema-builder.md B6)
+- [X] T019 [US1] Implement method → field conversion (extract args via `inspect.signature`, skip `cls` and `is_from_context_annotation`, build `ArgumentInfo` with defaults) in `build_compose_schema`
+- [X] T020 [US1] Implement recursive DTO/enum registration with dedup (use `id(python_class)` to detect same class; raise `DuplicateTypeError` on different-class-same-name) in `build_compose_schema`
+- [X] T021 [US1] Implement root `Query` (and optional `Mutation`) type assembly in `build_compose_schema`
+- [X] T022 [US1] Implement name conflict detection (service-level, method-level, type-level) at schema-build time in `build_compose_schema`
+- [X] T023 [P] [US1] Implement `ComposeSchema.render_sdl()` in `src/nexusx/use_case/compose_schema.py` (per contracts/schema-builder.md B7 ordering: scalars → enums → DTOs → service types → root Query/Mutation)
+- [X] T024 [P] [US1] Implement `ComposeSchema.render_introspection()` in `src/nexusx/use_case/compose_schema.py` (returns `__schema` payload; must pass T016 round-trip test)
+- [X] T025 [P] [US1] Implement `ComposeSchema.render_method_sdl(service_name, method_name)` in `src/nexusx/use_case/compose_schema.py` (returns method signature + transitive closure of return type)
+- [X] T026 [US1] Run US1 tests, ensure all pass: `uv run pytest tests/use_case/test_compose_schema.py -v`
 
 **Checkpoint**: US1 fully functional. `build_compose_schema(...)` produces valid schema. Can be demoed standalone (no MCP yet).
 
