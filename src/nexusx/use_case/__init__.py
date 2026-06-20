@@ -9,6 +9,7 @@ Public API (3.0+):
 
 from nexusx.use_case.business import UseCaseService, get_return_type
 from nexusx.use_case.cli import create_use_case_cli
+from nexusx.use_case.compose_executor import compose_introspect
 from nexusx.use_case.compose_mcp_server import create_use_case_graphql_mcp_server
 from nexusx.use_case.compose_schema import (
     ComposeSchema,
@@ -27,6 +28,7 @@ __all__ = [
     "build_compose_schema",
     "ComposeSchema",
     "ComposeSchemaError",
+    "compose_introspect",
     # Orthogonal surfaces (unchanged in 3.0)
     "create_use_case_cli",
     "create_jsonrpc_router",

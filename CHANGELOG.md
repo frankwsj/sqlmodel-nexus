@@ -25,6 +25,7 @@
 | `create_use_case_graphql_mcp_server(apps, name)` | 4 层渐进披露 MCP server：`list_apps` → `describe_compose_schema` → `describe_compose_method` → `compose_query` |
 | `build_compose_schema(app) -> ComposeSchema` | 直接访问生成的 schema（可用于自建 GraphiQL / 嵌入其它入口） |
 | `ComposeSchema` | 产物类，提供 `render_introspection()` / `render_sdl()` / `render_method_sdl(service, method)` |
+| `compose_introspect(schema, query)` | 处理 GraphiQL 风格的 introspection 查询（`__schema` / `__type` / `__typename`），返回 `{data, errors}` 信封。与 MCP Layer 3（拒绝内省）成对：MCP 走渐进披露，HTTP GraphiQL 走完整内省 |
 | `ComposeSchemaError` 及子类 | schema 生成期错误：`DuplicateServiceError` / `DuplicateMethodError` / `DuplicateTypeError` / `UnsupportedTypeError` / `SQLModelInDtoFieldError` / `MissingReturnAnnotationError` |
 
 **Schema 结构（固定三层）：**

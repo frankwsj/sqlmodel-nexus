@@ -39,6 +39,7 @@ from nexusx.use_case.types import UseCaseAppConfig
 __all__ = [
     "execute_compose_query",
     "is_introspection_query",
+    "compose_introspect",
 ]
 
 
@@ -312,7 +313,8 @@ def _build_kwargs(
             continue
         # Regular GraphQL argument.
         if name in graphql_args:
-            kwargs[name] = graphql_args[name]
+            raw_value = graphql_args[name]
+            kwargs[name] = _coerce_strict(raw_value, annotation, name, qualname)
         elif param.default is not inspect.Parameter.empty:
             pass  # leave default
         else:
@@ -320,7 +322,49 @@ def _build_kwargs(
                 f"Required argument '{name}' on '{qualname}' was not provided.",
                 service_method=qualname,
             )
+
+    # FromContext values also get coerced — extractors can return JSON-native
+    # values (e.g. {"user_id": "42"} from a header) that need promotion to the
+    # method's declared type.
+    for name, value in list(kwargs.items()):
+        annotation = hints.get(name, inspect.Parameter.empty)
+        if annotation is inspect.Parameter.empty or value is None:
+            continue
+        if is_from_context_annotation(annotation):
+            kwargs[name] = _coerce_strict(value, annotation, name, qualname)
     return kwargs
+
+
+def _coerce_strict(
+    value: Any, annotation: Any, arg_name: str, qualname: str
+) -> Any:
+    """Defensive type coercion via Pydantic TypeAdapter.
+
+    ``QueryParser`` already converts graphql value nodes to native Python
+    values (IntValueNode→int, etc.), but two gaps remain:
+    - Custom scalars declared as Python types (``datetime``, ``UUID``, ``Decimal``)
+      come through as strings from the GraphQL side and need promotion.
+    - Pydantic ``BaseModel`` parameters: GraphQL object literals become dicts
+      and need to be rebuilt as model instances.
+
+    The coercion is best-effort: on failure we surface a graphql ``errors``
+    entry naming the offending argument, rather than letting the method
+    receive a mistyped value and crash deeper in the stack.
+
+    Mirrors pydantic-resolve's ``_coerce_strict``.
+    """
+    if value is None:
+        return None
+    if annotation is inspect.Parameter.empty or annotation is None:
+        return value
+    try:
+        return TypeAdapter(annotation).validate_python(value)
+    except Exception as exc:  # noqa: BLE001 — re-surface as graphql error
+        raise _ComposeExecutionError(
+            f"Failed to coerce argument '{arg_name}' on '{qualname}' "
+            f"to {annotation!r}: {exc}",
+            service_method=qualname,
+        ) from exc
 
 
 def _safe_hints(func: Any) -> dict[str, Any]:
@@ -409,3 +453,78 @@ def _error_response(message: str, service_method: str | None = None) -> dict[str
     if service_method is not None:
         error["extensions"] = {"service_method": service_method}
     return {"data": None, "errors": [error]}
+
+
+# ---------------------------------------------------------------------------
+# compose_introspect — GraphiQL-compatible introspection handler
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402 — local import keeps the top of the file clean
+
+_TYPE_NAME_RE = re.compile(r'__type\s*\(\s*name\s*:\s*["\']([^"\']+)["\']')
+
+
+def compose_introspect(
+    schema: ComposeSchema,
+    query: str | None = None,
+) -> dict[str, Any]:
+    """Handle a GraphQL introspection query against ``schema``.
+
+    Unlike ``execute_compose_query`` (which **rejects** introspection in
+    Layer 3 to keep MCP responses compact), this function **services**
+    introspection queries. It's intended for HTTP endpoints that want to
+    host GraphiQL — GraphiQL opens by sending the canonical ``__schema``
+    query, and needs the full introspection payload back.
+
+    Dispatch by keyword (substring match on the query string, matching
+    pydantic-resolve's behavior):
+
+    - ``__schema`` (or ``query is None``) → full introspection payload
+    - ``__type(name: "X")`` → single-type lookup
+    - ``__typename`` → literal ``"Query"``
+
+    Field-level selection inside ``__schema { ... }`` is **not** honored —
+    GraphiQL only ever sends the canonical full introspection query, so the
+    entire schema is returned.
+
+    Returns:
+        Standard graphql response envelope ``{"data": {...}, "errors": None}``.
+
+    Raises:
+        ComposeSchemaError: If ``schema`` carries no registry.
+    """
+    actual_query = query if query is not None else "__schema"
+    data: dict[str, Any] = {}
+
+    if "__schema" in actual_query:
+        data["__schema"] = schema.render_introspection()
+
+    if "__type" in actual_query:
+        type_name = _extract_type_name_from_query(actual_query)
+        if type_name is None:
+            data["__type"] = None
+        else:
+            data["__type"] = _render_type_by_name(schema, type_name)
+
+    if "__typename" in actual_query:
+        data["__typename"] = "Query"
+
+    return {"data": data, "errors": None}
+
+
+def _extract_type_name_from_query(query: str) -> str | None:
+    """Extract the type name from a ``__type(name: "X")`` query."""
+    match = _TYPE_NAME_RE.search(query)
+    return match.group(1) if match else None
+
+
+def _render_type_by_name(schema: ComposeSchema, name: str) -> dict[str, Any] | None:
+    """Look up one TypeInfo by name and render it as a graphql ``__Type`` payload."""
+    info = schema.registry.get(name)
+    if info is None:
+        return None
+    # Reuse the introspection renderer by filtering the registry down to one
+    # type. Cheaper than a parallel renderer and keeps the shape consistent.
+    from nexusx.use_case.compose_schema import _type_info_to_introspection
+
+    return _type_info_to_introspection(info)

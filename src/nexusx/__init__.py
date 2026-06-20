@@ -71,6 +71,7 @@ from nexusx.use_case import (
     UseCaseAppConfig,
     UseCaseService,
     build_compose_schema,
+    compose_introspect,
     create_jsonrpc_router,
     create_use_case_cli,
     create_use_case_graphql_mcp_server,
@@ -114,6 +115,7 @@ __all__ = [
     "build_compose_schema",
     "ComposeSchema",
     "ComposeSchemaError",
+    "compose_introspect",
     # Orthogonal UseCase surfaces (unchanged in 3.0)
     "create_use_case_cli",
     "create_jsonrpc_router",
