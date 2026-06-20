@@ -99,36 +99,36 @@ Single-project library layout:
 
 ### Tests for User Story 2 (write FIRST, ensure they FAIL)
 
-- [ ] T027 [P] [US2] Test `compose_query` happy path (single service, single method) in `tests/use_case/test_compose_executor.py`
-- [ ] T028 [P] [US2] Test multi-service concurrent execution (asserts `@query` methods run via `asyncio.gather`) in `tests/use_case/test_compose_executor.py`
-- [ ] T029 [P] [US2] Test field projection returns only requested fields (via `subset.build_subset_model`) in `tests/use_case/test_compose_executor.py`
-- [ ] T030 [P] [US2] Test `FromContext` injection at execution time (context_extractor plumbing) in `tests/use_case/test_compose_executor.py`
-- [ ] T031 [P] [US2] Test service method raising business exception → `{data: null, errors: [...]}` with method name in message in `tests/use_case/test_compose_executor.py`
-- [ ] T032 [P] [US2] Test malformed GraphQL string → `{data: null, errors: [...]}` with parse error in `tests/use_case/test_compose_executor.py`
-- [ ] T033 [P] [US2] Test Layer 0 `list_apps` returns `{success, data}` envelope with apps list in `tests/use_case/test_compose_mcp_server.py`
-- [ ] T034 [P] [US2] Test Layer 1 `describe_compose_schema` returns compact services+methods (no args/return types) in `tests/use_case/test_compose_mcp_server.py`
-- [ ] T035 [P] [US2] Test Layer 2 `describe_compose_method` returns args + return type + SDL fragment in `tests/use_case/test_compose_mcp_server.py`
-- [ ] T036 [P] [US2] Test Layer 3 `compose_query` returns GraphQL standard `{data, errors}` envelope in `tests/use_case/test_compose_mcp_server.py`
-- [ ] T037 [P] [US2] Test `__schema` / `__type` / `__typename` queries are rejected with hint in `tests/use_case/test_introspection_rejected.py`
+- [X] T027 [P] [US2] Test `compose_query` happy path (single service, single method) in `tests/use_case/test_compose_executor.py`
+- [X] T028 [P] [US2] Test multi-service concurrent execution (asserts `@query` methods run via `asyncio.gather`) in `tests/use_case/test_compose_executor.py`
+- [X] T029 [P] [US2] Test field projection returns only requested fields (via `subset.build_subset_model`) in `tests/use_case/test_compose_executor.py`
+- [X] T030 [P] [US2] Test `FromContext` injection at execution time (context_extractor plumbing) in `tests/use_case/test_compose_executor.py`
+- [X] T031 [P] [US2] Test service method raising business exception → `{data: null, errors: [...]}` with method name in message in `tests/use_case/test_compose_executor.py`
+- [X] T032 [P] [US2] Test malformed GraphQL string → `{data: null, errors: [...]}` with parse error in `tests/use_case/test_compose_executor.py`
+- [X] T033 [P] [US2] Test Layer 0 `list_apps` returns `{success, data}` envelope with apps list in `tests/use_case/test_compose_mcp_server.py`
+- [X] T034 [P] [US2] Test Layer 1 `describe_compose_schema` returns compact services+methods (no args/return types) in `tests/use_case/test_compose_mcp_server.py`
+- [X] T035 [P] [US2] Test Layer 2 `describe_compose_method` returns args + return type + SDL fragment in `tests/use_case/test_compose_mcp_server.py`
+- [X] T036 [P] [US2] Test Layer 3 `compose_query` returns GraphQL standard `{data, errors}` envelope in `tests/use_case/test_compose_mcp_server.py`
+- [X] T037 [P] [US2] Test `__schema` / `__type` / `__typename` queries are rejected with hint in `tests/use_case/test_introspection_rejected.py`
 
 ### Implementation for User Story 2
 
-- [ ] T038 [US2] Implement `is_introspection_query(query: str) -> bool` in `src/nexusx/use_case/compose_executor.py` (AST-level `__` prefix detection, per research.md R6)
-- [ ] T039 [US2] Implement `execute_compose_query(app, query, context) -> {data, errors}` in `src/nexusx/use_case/compose_executor.py` (parse → introspection check → plan → execute service methods → project via `subset.build_subset_model` + `TypeAdapter`; per contracts/schema-builder.md B9)
-- [ ] T040 [US2] Add concurrent execution: `@query` methods via `asyncio.gather`, `@mutation` methods serial in `execute_compose_query`
-- [ ] T041 [US2] Add exception mapping (`KeyError` for missing service/method, business exception, parse error → all become `errors` array entries with method name) in `execute_compose_query`
-- [ ] T042 [US2] Document `FR-004a` enforcement in `execute_compose_query` docstring: do NOT wrap results in `Resolver()`; service methods own that. Add code comment citing spec.md FR-004a.
-- [ ] T043 [US2] Trim `UseCaseResources` in `src/nexusx/use_case/manager.py`: remove `introspector` field, add `compose_schema: ComposeSchema` field (per data-model.md D7)
-- [ ] T044 [US2] Update `UseCaseManager` to construct `ComposeSchema` per app at registration time (eager, per research.md R11) in `src/nexusx/use_case/manager.py`
-- [ ] T045 [US2] Implement `create_use_case_graphql_mcp_server(apps, name) -> FastMCP` skeleton in `src/nexusx/use_case/compose_mcp_server.py` (creates `UseCaseManager`, registers 4 tools)
-- [ ] T046 [P] [US2] Implement `list_apps` tool (Layer 0) in `src/nexusx/use_case/compose_mcp_server.py` returning `{success, data}` per contracts/mcp-tools.md T0
-- [ ] T047 [P] [US2] Implement `describe_compose_schema(app_name)` tool (Layer 1) in `src/nexusx/use_case/compose_mcp_server.py` returning compact services+methods
-- [ ] T048 [P] [US2] Implement `describe_compose_method(app_name, service_name, method_name)` tool (Layer 2) in `src/nexusx/use_case/compose_mcp_server.py` returning args + return type + `render_method_sdl`
-- [ ] T049 [US2] Implement `compose_query(app_name, query, ctx)` tool (Layer 3) in `src/nexusx/use_case/compose_mcp_server.py`: pulls context via `context_extractor`, calls `execute_compose_query`, returns `{data, errors}`
-- [ ] T050 [US2] Extend `MCPErrors` enum in `src/nexusx/mcp/types/errors.py` with `APP_NOT_FOUND`, `SERVICE_NOT_FOUND`, `METHOD_NOT_FOUND`, `VALIDATION_ERROR` (per contracts/mcp-tools.md)
-- [ ] T051 [US2] Update `src/nexusx/use_case/__init__.py`: export `create_use_case_graphql_mcp_server`, `build_compose_schema`, `ComposeSchema`, `ComposeSchemaError` (per contracts/public-api.md C4)
-- [ ] T052 [US2] Update `src/nexusx/__init__.py`: re-export the 4 new symbols (per contracts/public-api.md C4)
-- [ ] T053 [US2] Run US2 tests, ensure all pass: `uv run pytest tests/use_case/test_compose_executor.py tests/use_case/test_compose_mcp_server.py tests/use_case/test_introspection_rejected.py -v`
+- [X] T038 [US2] Implement `is_introspection_query(query: str) -> bool` in `src/nexusx/use_case/compose_executor.py` (AST-level `__` prefix detection, per research.md R6)
+- [X] T039 [US2] Implement `execute_compose_query(app, query, context) -> {data, errors}` in `src/nexusx/use_case/compose_executor.py` (parse → introspection check → plan → execute service methods → project via `subset.build_subset_model` + `TypeAdapter`; per contracts/schema-builder.md B9)
+- [X] T040 [US2] Add concurrent execution: `@query` methods via `asyncio.gather`, `@mutation` methods serial in `execute_compose_query`
+- [X] T041 [US2] Add exception mapping (`KeyError` for missing service/method, business exception, parse error → all become `errors` array entries with method name) in `execute_compose_query`
+- [X] T042 [US2] Document `FR-004a` enforcement in `execute_compose_query` docstring: do NOT wrap results in `Resolver()`; service methods own that. Add code comment citing spec.md FR-004a.
+- [X] T043 [US2] Trim `UseCaseResources` in `src/nexusx/use_case/manager.py`: remove `introspector` field, add `compose_schema: ComposeSchema` field (per data-model.md D7)
+- [X] T044 [US2] Update `UseCaseManager` to construct `ComposeSchema` per app at registration time (eager, per research.md R11) in `src/nexusx/use_case/manager.py`
+- [X] T045 [US2] Implement `create_use_case_graphql_mcp_server(apps, name) -> FastMCP` skeleton in `src/nexusx/use_case/compose_mcp_server.py` (creates `UseCaseManager`, registers 4 tools)
+- [X] T046 [P] [US2] Implement `list_apps` tool (Layer 0) in `src/nexusx/use_case/compose_mcp_server.py` returning `{success, data}` per contracts/mcp-tools.md T0
+- [X] T047 [P] [US2] Implement `describe_compose_schema(app_name)` tool (Layer 1) in `src/nexusx/use_case/compose_mcp_server.py` returning compact services+methods
+- [X] T048 [P] [US2] Implement `describe_compose_method(app_name, service_name, method_name)` tool (Layer 2) in `src/nexusx/use_case/compose_mcp_server.py` returning args + return type + `render_method_sdl`
+- [X] T049 [US2] Implement `compose_query(app_name, query, ctx)` tool (Layer 3) in `src/nexusx/use_case/compose_mcp_server.py`: pulls context via `context_extractor`, calls `execute_compose_query`, returns `{data, errors}`
+- [X] T050 [US2] Extend `MCPErrors` enum in `src/nexusx/mcp/types/errors.py` with `APP_NOT_FOUND`, `SERVICE_NOT_FOUND`, `METHOD_NOT_FOUND`, `VALIDATION_ERROR` (per contracts/mcp-tools.md)
+- [X] T051 [US2] Update `src/nexusx/use_case/__init__.py`: export `create_use_case_graphql_mcp_server`, `build_compose_schema`, `ComposeSchema`, `ComposeSchemaError` (per contracts/public-api.md C4)
+- [X] T052 [US2] Update `src/nexusx/__init__.py`: re-export the 4 new symbols (per contracts/public-api.md C4)
+- [X] T053 [US2] Run US2 tests, ensure all pass: `uv run pytest tests/use_case/test_compose_executor.py tests/use_case/test_compose_mcp_server.py tests/use_case/test_introspection_rejected.py -v`
 
 **Checkpoint**: US1 + US2 both functional. Can demo full MCP flow.
 
