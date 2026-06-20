@@ -19,7 +19,7 @@ Usage:
 """
 
 from demo.core_api.database import async_session, init_db
-from demo.core_api.dtos import SprintDetail, SprintSummary, TaskSummary
+from demo.core_api.dtos import SprintDetail, SprintSummary, TaskSummary, UserSummary
 from demo.core_api.models import Sprint, Task, User
 from nexusx import (
     ErManager,
@@ -50,13 +50,13 @@ class UserService(UseCaseService):
     """User management — query users."""
 
     @query
-    async def list_users(cls) -> list[dict]:
-        """Get all users as simple dicts."""
+    async def list_users(cls) -> list[UserSummary]:
+        """Get all users."""
         from sqlmodel import select
 
         async with async_session() as session:
             users = (await session.exec(select(User))).all()
-        return [{"id": u.id, "name": u.name} for u in users]
+        return [UserSummary(id=u.id, name=u.name) for u in users]
 
 
 class TaskService(UseCaseService):
