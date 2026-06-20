@@ -33,10 +33,10 @@ Single-project library layout:
 
 **Purpose**: Branch, version bump, doc skeleton.
 
-- [ ] T001 Create feature branch `001-usecase-graphql-mcp` off `master` (current HEAD has `.specify/` committed)
-- [ ] T002 [P] Bump `pyproject.toml` version `1.0.0` → `2.0.0` (per research.md R8)
-- [ ] T003 [P] Create `CHANGELOG.md` with `## 2.0.0` section (BREAKING + Added placeholders, per contracts/public-api.md C5)
-- [ ] T004 [P] Create `docs/migrations/2.0-use-case-graphql.md` skeleton (will be filled in US3)
+- [X] T001 Create feature branch `001-usecase-graphql-mcp` off `master` (current HEAD has `.specify/` committed)
+- [X] T002 [P] Bump `pyproject.toml` version `2.10.1` → `3.0.0` (corrected from plan's 1.0.0→2.0.0; actual pre-feature version was 2.10.1)
+- [X] T003 [P] Create `CHANGELOG.md` with `## 3.0.0` section (BREAKING + Added, per contracts/public-api.md C5)
+- [X] T004 [P] Create `docs/migrations/3.0-use-case-graphql.md` skeleton (will be filled in US3)
 
 **Checkpoint**: Branch ready, version bumped, doc placeholders exist.
 
