@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.1
+
+### Bug Fix: `use_case.cli` 不再在 import 时强制要求 `typer`
+
+`use_case/cli.py` 原本在模块顶部 `try: import typer except ImportError: raise`，导致只要 `import nexusx`（更准确说，触发 `nexusx.use_case` 包加载）就会 eager 拉起 `typer`，即使从没碰过 CLI 入口。这与 `nexusx.mcp` 处理 `fastmcp` 的方式不一致——后者用 `TYPE_CHECKING` 守卫 type-only import、runtime 在函数体内 lazy import。
+
+**行为：**
+- `import nexusx` 不再 eager 加载 `typer`；用户不必装 `nexusx[cli]` extra 也能调用 `create_simple_mcp_server` / `create_use_case_graphql_mcp_server` / `create_router` / `create_jsonrpc_router` 等所有非 CLI 入口
+- `create_use_case_cli()` 行为不变；首次调用时才在函数体内 `import typer`，未装时由 typer 自身抛 `ImportError`（移除了自定义错误信息）
+- 公共 API 表面完全不变；`create_use_case_cli` 仍是 `nexusx` 顶层导出符号
+
+**Changes：**
+- `src/nexusx/use_case/cli.py`: 删掉顶部 `try: import typer except ImportError: raise` 块；改用 `if TYPE_CHECKING: import typer`；`_build_command` 和 `create_use_case_cli` 函数体内分别加局部 `import typer`
+
+**版本同步：**
+- `pyproject.toml`: 3.0.0 → 3.0.1
+
 ## 3.0.0
 
 ### BREAKING: 移除老的直接调用式 UseCase MCP 入口
