@@ -25,14 +25,8 @@ import re
 from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints
 
 if TYPE_CHECKING:
-    from nexusx.use_case.types import UseCaseAppConfig
-
-try:
     import typer
-except ImportError as exc:
-    raise ImportError(
-        "typer is required for CLI support: pip install nexusx[cli]"
-    ) from exc
+    from nexusx.use_case.types import UseCaseAppConfig
 
 from nexusx.use_case.business import USE_CASE_METHODS_ATTR
 from nexusx.use_case.serialization import serialize_result as _serialize_result
@@ -89,6 +83,8 @@ def _build_command(
 
     # Set signature for Typer to introspect — use typer.Option so all params
     # become CLI options (--param-name) instead of positional arguments.
+    import typer
+
     params = []
     for pname, panno, pdefault in param_infos:
         default = typer.Option(pdefault, help=f"{pname}")
@@ -133,6 +129,8 @@ def create_use_case_cli(
 
     if not isinstance(config, UseCaseAppConfig):
         raise TypeError("config must be a UseCaseAppConfig")
+
+    import typer
 
     name = app_name or config.name
     app = typer.Typer(name=name, help=f"{name} CLI", no_args_is_help=True)
