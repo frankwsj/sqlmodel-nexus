@@ -553,7 +553,6 @@ class TestBfsEdgeCases:
     async def test_resolve_with_ancestor_context(self):
         """resolve_* should receive ancestor_context from parent ExposeAs."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -604,7 +603,6 @@ class TestPostWithLoader:
     async def test_post_with_collector_and_loader(self):
         """post_* should receive both Collector and Loader parameters."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -637,6 +635,102 @@ class TestPostWithLoader:
         assert "tag_1" in result.collected_vals
         assert "tag_2" in result.collected_vals
         assert result.summary == "tag_99"
+
+
+class TestLoaderInstances:
+    """Tests for ``Resolver(loader_instances=...)`` — pre-created DataLoader instances.
+
+    Covers spec feature 002:
+    - US1: pre-primed value observed, batch call suppressed for primed key.
+    - US2: supplied instance used by reference, constructor state preserved.
+    - US3: misuse fails fast at construction with TypeError.
+    """
+
+    async def test_loader_instances_pre_prime(self):
+        """US1: a primed key is returned from cache; the batch function only runs for unprimed keys."""
+        from aiodataloader import DataLoader
+
+        batch_calls: list[list[int]] = []
+
+        class CountingLoader(DataLoader):
+            async def batch_load_fn(self, keys):
+                batch_calls.append(list(keys))
+                return [f"value_{k}" for k in keys]
+
+        loader = CountingLoader()
+        loader.prime(42, "primed_value_42")
+
+        class Item(BaseModel):
+            val: int
+            loaded: str = ""
+
+            def resolve_loaded(self, loader=Loader(CountingLoader)):
+                return loader.load(self.val)
+
+        items = [Item(val=42), Item(val=7)]
+        result = await Resolver(loader_instances={CountingLoader: loader}).resolve(items)
+
+        # Primed value observed, batch NOT triggered for key 42.
+        assert result[0].loaded == "primed_value_42"
+        # Unprimed key falls through to batch.
+        assert result[1].loaded == "value_7"
+        # Exactly one batch dispatch (containing only the unprimed key).
+        assert batch_calls == [[7]]
+
+    async def test_loader_instances_by_reference(self):
+        """US2: the supplied instance is used by reference; id() and constructor state are preserved."""
+        from aiodataloader import DataLoader
+
+        class TaggedLoader(DataLoader):
+            def __init__(self, tag: str = "default", **kwargs):
+                super().__init__(**kwargs)
+                self.tag = tag
+
+            async def batch_load_fn(self, keys):
+                return [f"{self.tag}_{k}" for k in keys]
+
+        captured: list = []
+        supplied = TaggedLoader(tag="abc")
+
+        class Item(BaseModel):
+            val: int
+            tag: str = ""
+
+            def resolve_tag(self, loader=Loader(TaggedLoader)):
+                captured.append(loader)
+                return loader.load(self.val)
+
+        result = await Resolver(loader_instances={TaggedLoader: supplied}).resolve(
+            Item(val=1)
+        )
+
+        assert result.tag == "abc_1"
+        assert len(captured) == 1
+        # Same instance by identity.
+        assert captured[0] is supplied
+        # Constructor state preserved.
+        assert captured[0].tag == "abc"
+
+    async def test_loader_instances_validation_errors(self):
+        """US3: malformed input fails at construction with a typed error."""
+        from aiodataloader import DataLoader
+
+        class ValidLoader(DataLoader):
+            async def batch_load_fn(self, keys):
+                return keys
+
+        # Non-DataLoader key.
+        with pytest.raises(TypeError, match="must be a subclass of aiodataloader.DataLoader"):
+            Resolver(loader_instances={dict: object()})
+
+        # Value not an instance of the key class.
+        with pytest.raises(TypeError, match=r"must be an instance of ValidLoader"):
+            Resolver(loader_instances={ValidLoader: object()})
+
+        # Empty dict and None must succeed.
+        Resolver(loader_instances={})
+        Resolver()
+        Resolver(loader_instances=None)
 
 
 class TestOrmToDto:
@@ -762,7 +856,6 @@ class TestShouldTraverse:
     async def test_expose_as_prevents_skip(self):
         """Nodes with ExposeAs should not be skipped."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -787,7 +880,6 @@ class TestShouldTraverse:
     async def test_send_to_prevents_skip(self):
         """Nodes with SendTo should not be skipped."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -1004,7 +1096,6 @@ class TestResolverPostDefaultHandler:
         """post_default_handler can read a Collector that descendants
         populated via SendTo — recursion finishes before the handler runs."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -1057,7 +1148,6 @@ class TestResolverPostDefaultHandler:
     async def test_handler_with_ancestor_context(self):
         """The ancestor_context parameter receives ExposeAs values."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -1255,7 +1345,7 @@ class TestTypingShapeTraversal:
 
         class ParentDTO(BaseModel):
             id: int
-            child: Optional[ChildDTO] = None
+            child: ChildDTO | None = None
 
         result = await Resolver().resolve(
             ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),

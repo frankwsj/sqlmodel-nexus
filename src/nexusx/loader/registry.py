@@ -509,8 +509,16 @@ class ErManager:
         er_manager = self
 
         class BoundResolver(_Resolver):
-            def __init__(self, context: dict[str, Any] | None = None):
-                super().__init__(loader_registry=er_manager, context=context)
+            def __init__(
+                self,
+                context: dict[str, Any] | None = None,
+                loader_instances: dict[type[DataLoader], DataLoader] | None = None,
+            ):
+                super().__init__(
+                    loader_registry=er_manager,
+                    context=context,
+                    loader_instances=loader_instances,
+                )
 
         BoundResolver.__name__ = "Resolver"
         BoundResolver.__qualname__ = "Resolver"

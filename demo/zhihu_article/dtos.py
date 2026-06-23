@@ -7,9 +7,8 @@ Shows progressive complexity:
 - Custom relationship auto-loading (ProductReviewDTO)
 """
 
-from nexusx import DefineSubset, SubsetConfig
-
 from demo.zhihu_article.models import Customer, Order, OrderItem, Product, Review
+from nexusx import DefineSubset, SubsetConfig
 
 
 class CustomerDTO(DefineSubset):

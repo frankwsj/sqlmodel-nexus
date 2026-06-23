@@ -23,11 +23,10 @@ from typing import Optional
 
 USE_MYSQL = "--mysql" in sys.argv
 
+from graphql import parse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, Relationship, SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
-
-from graphql import parse
 
 from nexusx.execution.query_executor import QueryExecutor
 from nexusx.loader.registry import ErManager

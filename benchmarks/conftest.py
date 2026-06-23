@@ -1,11 +1,10 @@
 """Shared fixtures and models for nexusx benchmark tests."""
 
-import asyncio
 from typing import Optional
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import Field, Relationship, SQLModel, select
+from sqlmodel import Field, Relationship, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from nexusx import (
@@ -13,7 +12,6 @@ from nexusx import (
     DefineSubset,
     ErManager,
     SubsetConfig,
-    build_dto_select,
 )
 
 # ──────────────────────────────────────────────────────────
@@ -73,7 +71,7 @@ class Post(SQLModel, table=True):
     title: str
     author_id: int = Field(foreign_key="bench_user.id")
 
-    author: Optional[User] = Relationship(back_populates="posts")
+    author: User | None = Relationship(back_populates="posts")
     comments: list["Comment"] = Relationship(
         back_populates="post",
         sa_relationship_kwargs={"lazy": "noload", "order_by": "Comment.id"},
@@ -88,8 +86,8 @@ class Comment(SQLModel, table=True):
     post_id: int = Field(foreign_key="bench_post.id")
     author_id: int = Field(foreign_key="bench_user.id")
 
-    post: Optional[Post] = Relationship(back_populates="comments")
-    author: Optional[User] = Relationship(back_populates="comments")
+    post: Post | None = Relationship(back_populates="comments")
+    author: User | None = Relationship(back_populates="comments")
 
 
 # ──────────────────────────────────────────────────────────

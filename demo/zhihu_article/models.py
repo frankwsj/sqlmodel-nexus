@@ -20,7 +20,8 @@ Custom relationship (non-ORM):
 from collections import defaultdict
 from typing import Optional
 
-from sqlmodel import Field, Relationship as SQLRelationship, SQLModel, select
+from sqlmodel import Field, SQLModel, select
+from sqlmodel import Relationship as SQLRelationship
 
 from nexusx import Relationship
 

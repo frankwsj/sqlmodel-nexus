@@ -9,11 +9,10 @@ import json
 
 from fastmcp import Client
 
-from nexusx import ErManager, UseCaseAppConfig, create_use_case_graphql_mcp_server
-
 from demo.zhihu_article.database import async_session, init_db
 from demo.zhihu_article.models import Customer, Order, OrderItem, Product, Review
 from demo.zhihu_article.services import CustomerService, OrderService, ProductService, set_resolver
+from nexusx import ErManager, UseCaseAppConfig, create_use_case_graphql_mcp_server
 
 # ErManager + Resolver
 er = ErManager(

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated
 
 import pytest
 from pydantic import BaseModel
 
-from nexusx.decorator import mutation, query
+from nexusx.decorator import query
 from nexusx.use_case.business import UseCaseService
 from nexusx.use_case.compose_executor import (
     _coerce_strict,
@@ -25,7 +25,6 @@ from nexusx.use_case.compose_executor import (
 from nexusx.use_case.compose_schema import build_compose_schema
 from nexusx.use_case.context import FromContext
 from nexusx.use_case.types import UseCaseAppConfig
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -180,7 +179,7 @@ class _CoercionService(UseCaseService):
     @query
     async def optional_uuid(
         cls,
-        u: Optional[uuid.UUID] = None,
+        u: uuid.UUID | None = None,
     ) -> str:
         return f"got {u}"
 

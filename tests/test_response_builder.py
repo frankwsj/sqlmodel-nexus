@@ -144,7 +144,7 @@ class TestGetRelationEntity:
 # Additional coverage tests
 # ──────────────────────────────────────────────────────────
 
-from typing import Optional, get_args, get_origin
+from typing import Optional
 
 from nexusx.response_builder import (
     _build_scalar_model,
@@ -265,7 +265,6 @@ class TestIsListRelationship:
         """list[...] annotation should be detected."""
         # RBPost.author is Optional[RBUser] — not a list
         # Need a model with a resolved list[Entity] annotation
-        from typing import get_origin
 
         # Verify the function works with a direct list type
         class ListEntity(SQLModel, table=False):

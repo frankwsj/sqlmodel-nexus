@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, get_args, get_origin, get_type_hints
 
 if TYPE_CHECKING:
     import typer
+
     from nexusx.use_case.types import UseCaseAppConfig
 
 from nexusx.use_case.business import USE_CASE_METHODS_ATTR
