@@ -69,6 +69,9 @@ nav:
     - UseCase Service: ./advanced/use_case_service.md
     - UseCase + FastAPI: ./advanced/use_case_fastapi.md
     - Voyager Visualization: ./advanced/voyager.md
+  - Articles:
+    - Design Highlights: ./feature-highlights.md
+    - Clean Architecture Comparison: ./clean-architecture-comparison.md
   - API Reference:
     - GraphQLHandler: ./api/api_graphql_handler.md
     - Core API: ./api/api_core.md
@@ -124,6 +127,9 @@ plugins:
             "UseCase Service": "UseCase 服务"
             "UseCase + FastAPI": "UseCase + FastAPI"
             "Voyager Visualization": "Voyager 可视化"
+            "Articles": "文集"
+            "Design Highlights": "设计亮点"
+            "Clean Architecture Comparison": "Clean Architecture 对比"
             GraphQLHandler: "GraphQLHandler"
             "Core API": "Core API"
             "Cross-Layer Data Flow": "跨层数据流"
