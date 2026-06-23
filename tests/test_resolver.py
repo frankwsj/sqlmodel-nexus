@@ -553,7 +553,6 @@ class TestBfsEdgeCases:
     async def test_resolve_with_ancestor_context(self):
         """resolve_* should receive ancestor_context from parent ExposeAs."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -604,7 +603,6 @@ class TestPostWithLoader:
     async def test_post_with_collector_and_loader(self):
         """post_* should receive both Collector and Loader parameters."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -858,7 +856,6 @@ class TestShouldTraverse:
     async def test_expose_as_prevents_skip(self):
         """Nodes with ExposeAs should not be skipped."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -883,7 +880,6 @@ class TestShouldTraverse:
     async def test_send_to_prevents_skip(self):
         """Nodes with SendTo should not be skipped."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -1100,7 +1096,6 @@ class TestResolverPostDefaultHandler:
         """post_default_handler can read a Collector that descendants
         populated via SendTo — recursion finishes before the handler runs."""
 
-        from typing import Annotated
 
         from nexusx.context import Collector, SendTo
 
@@ -1153,7 +1148,6 @@ class TestResolverPostDefaultHandler:
     async def test_handler_with_ancestor_context(self):
         """The ancestor_context parameter receives ExposeAs values."""
 
-        from typing import Annotated
 
         from nexusx.context import ExposeAs
 
@@ -1351,7 +1345,7 @@ class TestTypingShapeTraversal:
 
         class ParentDTO(BaseModel):
             id: int
-            child: Optional[ChildDTO] = None
+            child: ChildDTO | None = None
 
         result = await Resolver().resolve(
             ParentDTO(id=1, child=ChildDTO(id=10, name="kid")),

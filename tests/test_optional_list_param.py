@@ -15,7 +15,6 @@ from nexusx import mutation, query
 from nexusx.sdl_generator import SDLGenerator, _python_type_to_graphql
 from nexusx.type_converter import TypeConverter
 
-
 # ── Entity with optional list parameters ───────────────────────────────
 
 
@@ -41,7 +40,7 @@ class ItemForListBug(SQLModel):
 
     @mutation
     async def create_with_optional_typing(
-        cls, name: str, tags: Optional[list[str]] = None
+        cls, name: str, tags: list[str] | None = None
     ) -> "ItemForListBug":
         """Create item using Optional[list[str]] syntax."""
         return ItemForListBug(id=1, name=name)

@@ -9,12 +9,10 @@ Each method:
 3. Returns DTOs (Pydantic models) that serialize cleanly to JSON
 """
 
-from nexusx import UseCaseService, build_dto_select, query, mutation
-
 from demo.zhihu_article.database import async_session
 from demo.zhihu_article.dtos import CustomerDTO, OrderDTO, ProductWithReviewsDTO
 from demo.zhihu_article.models import Customer, Order, Product
-
+from nexusx import UseCaseService, build_dto_select, mutation, query
 
 # Resolver is created by ErManager in mcp_server.py and injected here.
 # This avoids circular imports while keeping services testable.

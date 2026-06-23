@@ -14,19 +14,16 @@ import asyncio
 
 from sqlmodel import select
 
-from nexusx.execution.query_executor import QueryExecutor
-from nexusx.loader.registry import ErManager
-from nexusx.query_parser import QueryParser
-
 from benchmarks.conftest import (
     BLOG_ENTITIES,
     SPRINT_ENTITIES,
-    Comment,
-    Post,
     Sprint,
     Task,
     User,
 )
+from nexusx.execution.query_executor import QueryExecutor
+from nexusx.loader.registry import ErManager
+from nexusx.query_parser import QueryParser
 
 
 def _sync(coro):

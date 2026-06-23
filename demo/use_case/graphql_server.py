@@ -29,6 +29,9 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
 
+# Reuse the full demo's services — same ErManager + DefineSubset DTOs +
+# Resolver-powered auto-loading as the MCP path.
+from demo.use_case.mcp_server import SprintService, TaskService, UserService
 from nexusx import (
     UseCaseAppConfig,
     build_compose_schema,
@@ -39,10 +42,6 @@ from nexusx.use_case.compose_executor import (
     execute_compose_query,
     is_introspection_query,
 )
-
-# Reuse the full demo's services — same ErManager + DefineSubset DTOs +
-# Resolver-powered auto-loading as the MCP path.
-from demo.use_case.mcp_server import SprintService, TaskService, UserService
 
 APP_CONFIG = UseCaseAppConfig(
     name="project",

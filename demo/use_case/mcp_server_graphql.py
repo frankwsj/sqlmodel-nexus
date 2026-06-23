@@ -11,8 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 from nexusx import (
@@ -29,7 +27,7 @@ class UserSummary(BaseModel):
 
     id: int
     name: str
-    email: Optional[str] = None
+    email: str | None = None
 
 
 class UserService(UseCaseService):
@@ -46,12 +44,12 @@ class UserService(UseCaseService):
         return list(cls._users)
 
     @query
-    async def get_user(cls, user_id: int) -> Optional[UserSummary]:
+    async def get_user(cls, user_id: int) -> UserSummary | None:
         """Look up a user by id."""
         return next((u for u in cls._users if u.id == user_id), None)
 
     @mutation
-    async def rename_user(cls, user_id: int, new_name: str) -> Optional[UserSummary]:
+    async def rename_user(cls, user_id: int, new_name: str) -> UserSummary | None:
         """Rename a user; returns the updated user or None if id not found."""
         for i, u in enumerate(cls._users):
             if u.id == user_id:

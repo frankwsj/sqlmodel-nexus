@@ -19,12 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from benchmarks.bench_resolver import (
     USE_MYSQL,
-    SprintSummary,
-    _ensure_engine,
     _ensure_resolver,
     bench_nexusx_l3,
-    setup_db,
     seed_data,
+    setup_db,
 )
 
 N_WARMUP = 5

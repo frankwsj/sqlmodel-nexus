@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
 
 from nexusx.loader.factories import (
     _apply_filters,
@@ -20,7 +19,6 @@ from nexusx.loader.pagination import (
     create_result_type,
 )
 from tests.conftest import get_test_session_factory
-
 
 # ---------------------------------------------------------------------------
 # pagination.py: PageArgs

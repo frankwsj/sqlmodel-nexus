@@ -12,18 +12,13 @@ Usage:
 
 import asyncio
 
-from sqlmodel import select
-
 from benchmarks.conftest import (
     SprintDetail,
     SprintSummary,
     TaskSummary,
-    User,
     UserSummary,
     build_dto_select,
 )
-from benchmarks.conftest import Sprint as SprintModel
-from benchmarks.conftest import Task as TaskModel
 
 
 def _sync(coro):
