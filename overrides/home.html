@@ -625,17 +625,19 @@
           <span class="sn-code-panel__title">{{ t("Without nexusx", "手写 GraphQL schema + resolver") }}</span>
         </div>
         <div class="sn-code-panel__body">
-<pre><code><span class="sn-cm"># Write SDL by hand</span>
-<span class="sn-kw">type</span> <span class="sn-cls">Query</span> {
-  <span class="sn-fn">posts</span>(<span class="sn-var">limit</span>: <span class="sn-cls">Int</span>): [<span class="sn-cls">Post</span>]!
-}
-<span class="sn-kw">type</span> <span class="sn-cls">Post</span> {
-  <span class="sn-var">id</span>: <span class="sn-cls">Int</span>!
-  <span class="sn-var">title</span>: <span class="sn-cls">String</span>!
-  <span class="sn-var">author</span>: <span class="sn-cls">User</span>
-}
-<span class="sn-cm"># + resolver + DataLoader + N+1 fix</span>
-<span class="sn-cm"> <strong># Dozens of lines of boilerplate</strong></span></code></pre>
+<pre><code><span class="sn-cm"># Model already exists — but you redeclare it as SDL, field by field</span>
+<span class="sn-pr">@strawberry.type</span>
+<span class="sn-kw">class</span> <span class="sn-cls">PostType</span>:
+    <span class="sn-var">id</span>: <span class="sn-cls">strawberry.ID</span>
+    <span class="sn-var">title</span>: <span class="sn-cls">str</span>
+    <span class="sn-pr">@strawberry.field</span>
+    <span class="sn-kw">async def</span> <span class="sn-fn">author</span>(<span class="sn-var">self</span>, <span class="sn-var">info</span>) -> <span class="sn-cls">UserType</span> | <span class="sn-cls">None</span>:
+        <span class="sn-kw">return await</span> <span class="sn-var">info</span>.<span class="sn-var">context</span>[<span class="sn-st">"author_loader"</span>].<span class="sn-fn">load</span>(<span class="sn-var">self</span>.<span class="sn-var">author_id</span>)
+
+<span class="sn-cm"># + a custom DataLoader per relationship, or N+1 kills you</span>
+<span class="sn-kw">class</span> <span class="sn-cls">AuthorLoader</span>(<span class="sn-cls">DataLoader</span>):
+    <span class="sn-kw">async def</span> <span class="sn-fn">batch_load_fn</span>(<span class="sn-var">self</span>, <span class="sn-var">keys</span>): ...
+<span class="sn-cm"> <strong># ↑ repeat for every entity × relationship</strong></span></code></pre>
         </div>
       </div>
       <!-- After panel -->
@@ -653,7 +655,7 @@
 
     <span class="sn-pr">@query</span>
     <span class="sn-kw">async def</span> <span class="sn-fn">get_all</span>(<span class="sn-var">cls</span>, <span class="sn-var">limit</span>: <span class="sn-cls">int</span> = <span class="sn-nr">10</span>) -> <span class="sn-cls">list</span>[<span class="sn-st">'Post'</span>]: ...
-<span class="sn-cm"> <em># SDL + DataLoader auto-generated!</em></span></code></pre>
+<span class="sn-cm"> <em># SDL + resolvers + DataLoader — all derived from this one class</em></span></code></pre>
         </div>
       </div>
     </div>
