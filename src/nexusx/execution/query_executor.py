@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,8 @@ from nexusx.query_parser import FieldSelection
 
 if TYPE_CHECKING:
     from nexusx.loader.registry import ErManager, RelationshipInfo
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -147,6 +150,17 @@ class QueryExecutor:
                             )
 
                         except Exception as e:
+                            # Log the full traceback BEFORE flattening to
+                            # response. Per-field exceptions are common (user
+                            # input bugs, DB constraint violations, resolver
+                            # programming errors); the response stays
+                            # GraphQL-spec compliant ({message, path}) but
+                            # the server log retains the exception type and
+                            # stack for ops debugging.
+                            logger.exception(
+                                "Resolver error in field %s",
+                                field_name,
+                            )
                             errors.append(
                                 {"message": str(e), "path": [field_name]}
                             )

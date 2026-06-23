@@ -227,6 +227,31 @@ def _build_class_meta(kls: type) -> _ClassMeta:
         if attr_name == POST_DEFAULT_HANDLER:
             attr = getattr(kls, attr_name, None)
             if attr is not None and callable(attr):
+                # Detect semantic trap: when the user also declares a field
+                # named ``default_handler``, the ``post_<field>`` naming
+                # convention implies this method should populate that field.
+                # But ``post_default_handler`` is reserved as a finalizer
+                # (no auto-binding). Rather than silently discard the return
+                # value while the field sits at its default, fail loud so
+                # the user picks a clear path:
+                #   - rename the method (e.g. ``post_finalize``) and call it
+                #     from the field it should populate, OR
+                #   - drop the field if it was only meant to receive the
+                #     method's return value.
+                model_fields = getattr(kls, "model_fields", None)
+                if isinstance(model_fields, dict) and "default_handler" in model_fields:
+                    raise ValueError(
+                        f"Conflict on {kls.__name__}: method "
+                        f"`post_default_handler` is a reserved finalizer "
+                        f"(runs after all post_*, no field auto-binding), "
+                        f"but the class also declares a field "
+                        f"`default_handler`. The `post_<field>` naming "
+                        f"convention suggests the method should populate "
+                        f"the field, which it does not. Either rename the "
+                        f"method (e.g. `post_finalize`) and assign the "
+                        f"field manually in the body, or remove the "
+                        f"`default_handler` field."
+                    )
                 param_info = _analyze_method_params(attr, include_collectors=True)
                 meta.post_default_handler = (attr_name, param_info)
                 for _pname, collector in param_info.collector_deps:
@@ -645,13 +670,21 @@ class Resolver:
         if subset_fields is None:
             return dto_cls.model_validate(orm_instance)
 
-        # Skip None values: subset-generated DTOs give every extra field a
-        # default, so omitting a key is equivalent to using its default — and
-        # keeps "DB NULL" indistinguishable from "field absent on the DTO",
-        # which is the desired behavior for read-side projections. If a future
-        # use case needs to distinguish NULL from default, this is the line
-        # to revisit (issue #77 review).
-        kwargs = {f: v for f in subset_fields if (v := getattr(orm_instance, f, None)) is not None}
+        # Pass values through as-is — including None. Filtering None here
+        # would silently replace DB NULLs with the DTO field's declared
+        # default (Field(default=...) on the source entity), making
+        # "row has NULL" indistinguishable from "row has explicit default"
+        # in API responses. If the DTO field type doesn't allow None,
+        # Pydantic validation will raise — which is the correct signal
+        # that the schema needs Optional[...].
+        kwargs = {f: getattr(orm_instance, f, None) for f in subset_fields}
+        # Pydantic can leave DTO classes with unresolved forward refs when
+        # a DTO references another DTO that wasn't yet defined at class
+        # creation time (e.g. cross-module cycles, lazy imports). The first
+        # instantiation attempt raises PydanticUserError / NameError; we
+        # rebuild with a namespace containing every registered DTO and
+        # retry once. If the rebuild also fails the exception propagates —
+        # genuine schema bugs (typos, missing imports) are NOT masked.
         try:
             return dto_cls(**kwargs)
         except (PydanticUserError, NameError):

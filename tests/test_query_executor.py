@@ -167,6 +167,71 @@ class TestQueryExecutorBasic:
         assert "errors" in result
         assert any("kaboom" in e["message"] for e in result["errors"])
 
+    async def test_execute_handles_exception_in_method_logs_traceback(self, caplog):
+        """When a resolver raises, the full traceback must reach the logger.
+
+        Regression test for the silent-server-bug issue: per-field except at
+        query_executor.py:149 used to swallow exceptions into the response
+        ``errors`` list with NO log call, making resolver bugs invisible to
+        log-based monitoring (Sentry/Loki/CloudWatch).
+
+        The response still has ``{message, path}`` (GraphQL-spec compliant),
+        but the server log must also contain the traceback and exception type
+        for ops debugging.
+        """
+        import logging
+
+        # Force the nexusx.execution.query_executor logger to emit at DEBUG
+        # so caplog captures it regardless of root config.
+        executor = _make_executor()
+
+        class FailQuery(SQLModel, table=False):
+            @query
+            async def boom(cls):
+                # Programming bug — simulates real production resolver errors
+                raise AttributeError(
+                    "object of type 'NoneType' has no attribute 'split'"
+                )
+
+        method = _get_bound_method(FailQuery, "boom")
+        query_methods = {"fail": (FixtureUser, method)}
+        document, parsed = _parse("{ fail { id } }")
+
+        with caplog.at_level(
+            logging.ERROR,
+            logger="nexusx.execution.query_executor",
+        ):
+            result = await executor.execute_query(
+                document,
+                None,
+                None,
+                parsed,
+                query_methods,
+                {},
+                [FixtureUser],
+            )
+
+        # Response shape unchanged — still GraphQL-spec compliant.
+        assert "errors" in result
+        err = result["errors"][0]
+        assert "NoneType" in err["message"]
+        assert err["path"] == ["fail"]
+
+        # Server log must contain the traceback and exception type — these
+        # are what ops searches for when triaging "API returned errors".
+        log_text = caplog.text
+        assert "AttributeError" in log_text, (
+            "Exception type missing from log — silent server bug. "
+            "query_executor.py must call logger.exception on resolver errors."
+        )
+        assert "Traceback" in log_text, (
+            "Stack trace missing from log — only the message string was "
+            "logged. Use logger.exception(...) not logger.error(str(e))."
+        )
+        assert "split" in log_text, (
+            "Exception message missing from log — full context needed."
+        )
+
     async def test_execute_query_with_no_data_returns_empty(self):
         """Query with no matching methods should return empty data."""
         executor = _make_executor()

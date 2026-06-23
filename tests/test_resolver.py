@@ -746,6 +746,96 @@ class TestOrmToDto:
         assert result.name == "test"
         assert result.value == 42
 
+    def test_orm_to_dto_preserves_null_for_optional_field(self):
+        """A NULL-loaded ORM value must be preserved as None on the DTO,
+        not replaced by the field's declared default.
+
+        Regression test for the silent-NULL-replacement bug at
+        resolver.py:654 (was: `if v is not None` filtered out None
+        values, causing dto_cls(**kwargs) to fall back to Field(default)).
+        """
+        from types import SimpleNamespace
+
+        from sqlmodel import Field, SQLModel
+
+        from nexusx import DefineSubset
+
+        class ScoreEntity(SQLModel):
+            id: int | None = Field(default=None, primary_key=True)
+            name: str
+            # Nullable column with a non-None default — common pattern for
+            # "metric that defaults to 0 when missing".
+            score: Optional[int] = Field(default=0)
+
+        class ScoreDTO(DefineSubset):
+            __subset__ = (ScoreEntity, ("id", "name", "score"))
+
+        # Simulate an ORM instance loaded from a row where score IS NULL.
+        # (Direct `ScoreEntity(score=None)` would let SQLModel substitute
+        # the Python-side default of 0; raw SQL or server-side defaults
+        # bypass that, producing a genuine None on the loaded instance.)
+        orm_with_null = SimpleNamespace(id=1, name="legacy_row", score=None)
+
+        dto = Resolver._orm_to_dto(orm_with_null, ScoreDTO)
+
+        # NULL must round-trip as None — not collapse into Field(default=0).
+        assert dto.score is None, (
+            f"Expected None (preserved NULL), got {dto.score!r}. "
+            f"If the DTO field has a non-None default, this means NULL "
+            f"and 'explicit 0' are indistinguishable in API responses."
+        )
+
+    def test_orm_to_dto_preserves_explicit_zero(self):
+        """Counter-test: an explicit 0 must round-trip as 0 (not None)."""
+        from types import SimpleNamespace
+
+        from sqlmodel import Field, SQLModel
+
+        from nexusx import DefineSubset
+
+        class ScoreEntity(SQLModel):
+            id: int | None = Field(default=None, primary_key=True)
+            name: str
+            score: Optional[int] = Field(default=0)
+
+        class ScoreDTO(DefineSubset):
+            __subset__ = (ScoreEntity, ("id", "name", "score"))
+
+        orm_with_zero = SimpleNamespace(id=1, name="explicit_zero", score=0)
+        dto = Resolver._orm_to_dto(orm_with_zero, ScoreDTO)
+
+        assert dto.score == 0
+        assert dto.score is not None
+
+    def test_orm_to_dto_typo_in_string_annotation_propagates(self):
+        """A typo in a DTO's string annotation must propagate — not be
+        silently swallowed by an aggressive fallback.
+
+        Guards against re-introducing the pre-removal try/except wrapper
+        at ``_orm_to_dto`` that retried via ``model_rebuild``. The old
+        fallback was dead code under Pydantic 2 (auto-resolves forward
+        refs at class creation), but if someone re-adds similar logic
+        they could mask real schema bugs (typos, missing imports).
+        """
+        from sqlmodel import Field, SQLModel
+
+        from nexusx import DefineSubset
+        from types import SimpleNamespace
+
+        class TypoEntity(SQLModel):
+            id: int | None = Field(default=None, primary_key=True)
+            name: str
+
+        class TypoDTO(DefineSubset):
+            __subset__ = (TypoEntity, ("id", "name"))
+            # Forward ref to a class that doesn't exist anywhere — simulates
+            # a real-world typo or missing import.
+            child: "NonExistentClassXYZ | None" = None  # type: ignore[assignment]
+
+        orm = SimpleNamespace(id=1, name="x")
+        with pytest.raises(Exception, match="NonExistentClassXYZ"):
+            Resolver._orm_to_dto(orm, TypoDTO)
+
 
 class TestExtractDtoCls:
     def test_string_annotation_returns_none(self):
@@ -1209,6 +1299,66 @@ class TestResolverPostDefaultHandler:
         result = await Resolver().resolve(root)
         assert [r.doubled for r in result] == [2, 10, 20]
         assert [r.quadrupled for r in result] == [4, 20, 40]
+
+    def test_conflict_when_default_handler_field_also_exists(self):
+        """When a class declares BOTH:
+          - a method named ``post_default_handler`` (reserved finalizer)
+          - a field named ``default_handler``
+
+        the framework must raise. The naming pattern ``post_<field>`` strongly
+        suggests ``post_default_handler`` would populate a ``default_handler``
+        field — but it doesn't (reserved as a finalizer, no auto-binding).
+        Silently allowing this is a semantic trap.
+
+        Regression for BUG_1_6 silent-reserved-name issue. The fix preserves
+        backward compatibility: ``post_default_handler`` keeps its finalizer
+        behavior when no ``default_handler`` field exists; it only fails loud
+        when the conflict is unambiguous.
+        """
+        from pydantic import BaseModel
+
+        from nexusx.resolver import _get_class_meta
+
+        class ConflictingDTO(BaseModel):
+            default_handler: str = ""
+
+            def post_default_handler(self):
+                return "would be silently discarded"
+
+        with pytest.raises(ValueError, match="post_default_handler"):
+            _get_class_meta(ConflictingDTO)
+
+    def test_no_conflict_when_only_method_exists(self):
+        """Counter-test: ``post_default_handler`` alone (no field) keeps
+        working as the reserved finalizer."""
+        from pydantic import BaseModel
+
+        from nexusx.resolver import _get_class_meta
+
+        class FinalizerOnly(BaseModel):
+            label: str = ""
+
+            def post_default_handler(self):
+                self.label = "finalized"
+
+        # Should not raise — finalizer behavior preserved.
+        meta = _get_class_meta(FinalizerOnly)
+        assert meta.post_default_handler is not None
+
+    def test_no_conflict_when_only_field_exists(self):
+        """Counter-test: ``default_handler`` field alone (no reserved method)
+        is just a regular field — nothing special."""
+        from pydantic import BaseModel
+
+        from nexusx.resolver import _get_class_meta
+
+        class FieldOnly(BaseModel):
+            default_handler: str = "ok"
+
+        # Should not raise — field is a plain Pydantic attribute.
+        meta = _get_class_meta(FieldOnly)
+        assert meta.post_default_handler is None
+        assert "default_handler" in FieldOnly.model_fields
 
 
 # ──────────────────────────────────────────────────────────

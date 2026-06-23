@@ -1,5 +1,72 @@
 # Changelog
 
+## 3.1.1
+
+### Bug Fix: `_orm_to_dto` 保留 DB NULL（修复 BUG_1_2）
+
+`Resolver._orm_to_dto` 在把 ORM 实例转换为 DefineSubset DTO 时，过滤掉 `None` 值导致 DB NULL 被静默替换成 DTO 字段的 `Field(default=...)` 默认值。NULL 和"显式默认值"在 API 响应里无法区分——评分场景下 "未评分" 与 "评分为零" 同样是 0；时间戳场景下 NULL 被替换成 `default_factory=datetime.now` 完全失去语义。
+
+**行为：**
+- `_orm_to_dto` 直接透传字段值（含 None）给 DTO 构造器
+- 若 DTO 字段类型不允许 None（非 `Optional[...]`），Pydantic validation 会抛错——这是正确的 schema 不匹配信号，强制用户在 schema 上声明 `Optional`
+- 仅影响 auto-load 路径（`_orm_to_dto`）。直接 `DTO.model_validate(orm)` 不受影响
+
+**Changes：**
+- `src/nexusx/resolver.py:680`: 去掉 `if v is not None` filter，改为 `{f: getattr(orm_instance, f, None) for f in subset_fields}`
+- `tests/test_resolver.py::TestOrmToDto`: 新增 2 个测试——`test_orm_to_dto_preserves_null_for_optional_field`（NULL 必须保留为 None）+ `test_orm_to_dto_preserves_explicit_zero`（counter-test，明确 0 不被误判）
+
+### Bug Fix: QueryExecutor per-field 异常现在写日志（修复 BUG_1_3）
+
+`QueryExecutor` 在 resolver 抛错时（如 `@query` 方法内部的 `AttributeError`）只把异常 message 塞进 response `errors` 列表，**不写任何日志**——整个 `query_executor.py` 连 `import logging` 都没有。server bug 完全不可见：Sentry/Loki/CloudWatch 这些基于日志的告警系统收不到信号，运维无法定位生产事故。
+
+**行为：**
+- per-field except 仍把异常塞进 response（保持 GraphQL-spec 兼容的 `{message, path}`）
+- 额外调用 `logger.exception("Resolver error in field %s", field_name)`，让 traceback + exception type + line number 进入服务端日志
+- response shape 不变
+
+**实测对比：**
+
+| 异常来源 | 修复前日志 | 修复后日志 |
+|---|---|---|
+| 顶层语法错误（handler.py 兜底） | ✅ 完整 traceback | ✅ 完整 traceback（不变） |
+| Resolver 抛 AttributeError | ❌ 完全空 | ✅ 完整 traceback + exception type |
+
+**Changes：**
+- `src/nexusx/execution/query_executor.py`: 顶部加 `import logging` + `logger = logging.getLogger(__name__)`；per-field except 加 `logger.exception(...)` 调用
+- `tests/test_query_executor.py::TestQueryExecutorBasic`: 新增 `test_execute_handles_exception_in_method_logs_traceback`——用 `caplog` 验证 logger 收到 exception type、Traceback、message
+
+### Bug Fix: `post_default_handler` + `default_handler` 字段冲突检测（修复 BUG_1_6）
+
+`post_default_handler` 是保留字（作为 finalizer 跑在所有 `post_*` 之后，不自动绑定字段）。但 `post_<field>` 命名约定强烈暗示 `post_default_handler` 会填充名为 `default_handler` 的字段。用户同时定义两者时，方法返回值被静默丢弃、字段保持默认值——零警告。常量 `POST_DEFAULT_HANDLER` 也没在 `nexusx.__init__` 导出，保留字完全不可发现。
+
+**行为：**
+- 仅 `post_default_handler` 方法存在时：保持原 finalizer 行为不变（backward compat）
+- 仅 `default_handler` 字段存在时：当作普通字段（无副作用）
+- **同时**定义两者时：`_build_class_meta` 抛 `ValueError`，错误信息附 3 种修复路径（rename method / drop field / 手动赋值）
+
+**Changes：**
+- `src/nexusx/resolver.py:_build_class_meta`: 在 `post_default_handler` 分支检测 `kls.model_fields` 是否含 `default_handler`，若是则 raise
+- `tests/test_resolver.py::TestResolverPostDefaultHandler`: 新增 3 个测试——`test_conflict_when_default_handler_field_also_exists`（冲突必须 raise）+ 2 个 counter-test（仅 method / 仅 field 各自的行为）
+
+### Docs: CLAUDE.md 精简为纯行为约束
+
+CLAUDE.md 此前包含技术栈、目录结构、公共 API 列表、开发命令、核心约定、常见陷阱等 200 行技术细节，与 `pyproject.toml` / `__init__.py` / 源码本身重复且容易脱节（review 发现版本号、目录、API 列表均已过时 2 个大版本）。
+
+**行为：**
+- CLAUDE.md 简化为只保留"开发注意事项"段（uv.lock 镜像源约束）+ SPECKIT 工具自动管理段
+- 所有技术细节改为以源码 / pyproject.toml 为单一来源（`grep` / `find` 即可获取）
+- CLAUDE.md 加入 `.gitignore`，避免再次脱节
+
+**Changes：**
+- `CLAUDE.md`: 从 ~200 行简化为 17 行
+- `.gitignore`: 加入 `CLAUDE.md`
+
+### Chore: Review 测试基础设施
+
+review 期间为校验 finding 写的 failing-test 文件 `tests/test_review_findings.py` 已移至 `review/test_review_findings.py`（不进 git，pytest 默认不发现），与 `review/review_result.md` 一并 gitignore。
+
+---
+
 ## 3.1.0
 
 ### New Feature: Resolver `loader_instances` 参数
