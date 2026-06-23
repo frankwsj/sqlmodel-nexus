@@ -249,6 +249,40 @@ class TestImplicitAutoLoad:
         assert result[1].task_count == 2
 
     @pytest.mark.usefixtures("test_db")
+    async def test_implicit_with_derived_scalar_post_field(self):
+        """An auto-loaded relationship can feed a scalar post_* field.
+
+        Mirrors cases like ``agent`` auto-loaded first, then ``agent_name``
+        computed by ``post_agent_name()``.
+        """
+
+        session_factory = get_test_session_factory()
+        registry = ErManager(
+            entities=[FixtureUser, FixtureSprint, FixtureTask],
+            session_factory=session_factory,
+        )
+
+        class UserDTO(DefineSubset):
+            __subset__ = (FixtureUser, ("id", "name"))
+
+        class TaskDTO(DefineSubset):
+            __subset__ = (FixtureTask, ("id", "title", "owner_id"))
+            owner: UserDTO | None = None
+            owner_name: str | None = None
+
+            def post_owner_name(self):
+                return self.owner.name if self.owner else None
+
+        async with session_factory() as session:
+            tasks = (await session.exec(select(FixtureTask))).all()
+
+        dtos = [TaskDTO(id=t.id, title=t.title, owner_id=t.owner_id) for t in tasks]
+        result = await Resolver(registry).resolve(dtos)
+
+        assert all(dto.owner is not None for dto in result)
+        assert all(dto.owner_name == dto.owner.name for dto in result)
+
+    @pytest.mark.usefixtures("test_db")
     async def test_implicit_does_not_trigger_for_non_relationship_fields(self):
         """Fields that don't match a relationship should NOT auto-load."""
 
