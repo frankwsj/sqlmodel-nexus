@@ -335,6 +335,16 @@ class Resolver:
         loader_registry: ErManager providing DataLoader instances.
             If None, resolve_* methods must use their own loaders.
         context: Optional context dict accessible via `context` parameter.
+        loader_instances: Optional dict of pre-created DataLoader instances,
+            keyed by class. When a ``resolve_*`` method declares
+            ``loader=Loader(Cls)`` and ``Cls`` is a key in this dict, the
+            supplied instance is used instead of a Resolver-created fresh
+            instance. Supplied instances are stored by reference and are NOT
+            cleared between ``resolve()`` calls — the caller owns the
+            lifecycle (per-request isolation requires fresh instances per
+            request). Does not affect auto-loaded relationship fields: the
+            auto-load path uses ErManager exclusively and never consults
+            this dict.
     """
 
     # Class-level caches shared across Resolver instances. Both depend only
@@ -351,6 +361,7 @@ class Resolver:
         self,
         loader_registry: Any = None,
         context: dict[str, Any] | None = None,
+        loader_instances: dict[type[DataLoader], DataLoader] | None = None,
     ):
         self._registry = loader_registry
         self._context = context or {}
@@ -360,11 +371,40 @@ class Resolver:
         # before any node can be GC'd. Do NOT use this map outside the
         # Phase A → Phase B window.
         self._node_collectors: dict[int, dict[str, ICollector]] = {}
-        # Loader instance cache for Depends-based loaders
+        # Loader instance cache for Depends-based loaders (Resolver-created).
         self._loader_cache: dict[Any, DataLoader] = {}
+        # Caller-supplied loader instances (from ``loader_instances``). Stored
+        # by reference, validated at construction, NOT cleared between
+        # ``resolve()`` calls — caller owns the lifecycle. Consulted by
+        # ``_get_or_create_loader`` before the Resolver-created cache.
+        if loader_instances:
+            self._validate_loader_instances(loader_instances)
+            self._loader_instances: dict[type[DataLoader], DataLoader] = loader_instances
+        else:
+            self._loader_instances = {}
         # Auto-load plan cache: DTO class → auto-load specs (per Resolver,
         # avoids id(registry) reuse issues across ErManager lifetimes)
         self._auto_load_cache: dict[type, list] = {}
+
+    @staticmethod
+    def _validate_loader_instances(loader_instances: dict[Any, Any]) -> None:
+        """Validate every (key, value) pair in ``loader_instances``.
+
+        Each key MUST be a ``DataLoader`` subclass; each value MUST be an
+        instance of its key class. Raises ``TypeError`` so misuse fails fast
+        at construction — never reaches the traversal loop.
+        """
+        for cls, instance in loader_instances.items():
+            if not isinstance(cls, type) or not issubclass(cls, DataLoader):
+                raise TypeError(
+                    f"loader_instances key {cls!r} must be a subclass of "
+                    f"aiodataloader.DataLoader"
+                )
+            if not isinstance(instance, cls):
+                raise TypeError(
+                    f"loader_instances[{cls.__name__}] must be an instance of "
+                    f"{cls.__name__}, got {type(instance).__name__}"
+                )
 
     def _get_loader(
         self,
@@ -406,7 +446,13 @@ class Resolver:
         return None
 
     def _get_or_create_loader(self, loader_cls: type[DataLoader]) -> DataLoader:
-        """Get or create a cached DataLoader instance by class."""
+        """Get or create a DataLoader instance by class.
+
+        Caller-supplied instances (from ``loader_instances``) win over
+        Resolver-created cached instances.
+        """
+        if loader_cls in self._loader_instances:
+            return self._loader_instances[loader_cls]
         if loader_cls not in self._loader_cache:
             self._loader_cache[loader_cls] = loader_cls()
         return self._loader_cache[loader_cls]
