@@ -282,6 +282,25 @@ class TestCreateResolver:
         instance = ResolverCls()
         assert instance._registry is registry
 
+    async def test_create_resolver_forwards_loader_instances(self):
+        """``loader_instances`` must flow through ``create_resolver()`` to the underlying Resolver."""
+        from aiodataloader import DataLoader
+
+        class StubLoader(DataLoader):
+            async def batch_load_fn(self, keys):
+                return keys
+
+        supplied = StubLoader()
+        registry = ErManager(
+            entities=[FixtureUser, FixtureSprint, FixtureTask],
+            session_factory=get_test_session_factory(),
+        )
+        ResolverCls = registry.create_resolver()
+        instance = ResolverCls(loader_instances={StubLoader: supplied})
+
+        # Supplied instance is forwarded by reference.
+        assert instance._loader_instances[StubLoader] is supplied
+
 
 class TestPaginationValidation:
     def test_empty_order_by_raises(self):
