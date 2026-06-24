@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo as PydanticFieldInfo
 
 from nexusx.use_case.compose_schema import (
+    ArgumentInfo,
     DuplicateTypeError,
     EnumValueInfo,
     FieldInfo,
@@ -141,28 +142,49 @@ class ComposeTypeMapper:
         """
         return self._map(py_type, force_nullable=False)
 
+    def map_python_type_as_input(self, py_type: Any) -> TypeRef:
+        """Map a Python type for use as a method-argument (input) type ref.
+
+        Same wrapping / nullability rules as ``map_python_type``, but a
+        ``BaseModel`` leaf registers as ``INPUT_OBJECT`` (with ``input_fields``
+        populated and pydantic defaults surfaced as literals) instead of
+        ``OBJECT``. Use this for ``@query`` / ``@mutation`` argument type
+        refs — never for return types.
+
+        When the same BaseModel class is also registered as ``OBJECT`` from a
+        return type, the input version is renamed ``{Name}Input`` so the
+        GraphQL spec's "type name uniquely identifies kind" rule holds.
+        Scalars, enums, and container wrappers (``list``/``Optional``) are
+        unaffected by the input flag.
+        """
+        return self._map(py_type, force_nullable=False, is_input=True)
+
     # ------------------------------------------------------------------
     # Internal dispatch
     # ------------------------------------------------------------------
 
-    def _map(self, py_type: Any, force_nullable: bool) -> TypeRef:
+    def _map(self, py_type: Any, force_nullable: bool, *, is_input: bool = False) -> TypeRef:
         """Recursive mapper.
 
         ``force_nullable=True`` means we are inside an ``Optional`` and must
         NOT wrap the result in NON_NULL. Propagates down through containers
         so e.g. ``Optional[list[T]]`` produces ``[T!]`` (nullable list,
         non-null elements), matching the rules in data-model.md D3.
+
+        ``is_input=True`` propagates to ``_map_leaf`` so a BaseModel leaf
+        registers as INPUT_OBJECT instead of OBJECT (use this for method-arg
+        type refs, not return types). Scalars and enums are unaffected.
         """
         py_type = _strip_annotated(py_type)
         origin = get_origin(py_type)
 
         # Optional[T] / T | None  (PEP 604 union or typing.Union[T, None])
         if origin is Union or isinstance(py_type, types.UnionType):
-            return self._map_optional(py_type)
+            return self._map_optional(py_type, is_input=is_input)
 
         # list[T] / typing.List[T]
         if origin is list:
-            return self._map_list(py_type, force_nullable=force_nullable)
+            return self._map_list(py_type, force_nullable=force_nullable, is_input=is_input)
 
         # tuple — reject, fixed-size tuples aren't idiomatic GraphQL
         if origin is tuple:
@@ -178,10 +200,10 @@ class ComposeTypeMapper:
             )
 
         # Leaf type (scalar / enum / Pydantic)
-        leaf_ref = self._map_leaf(py_type)
+        leaf_ref = self._map_leaf(py_type, is_input=is_input)
         return leaf_ref if force_nullable else non_null(leaf_ref)
 
-    def _map_optional(self, py_type: Any) -> TypeRef:
+    def _map_optional(self, py_type: Any, *, is_input: bool = False) -> TypeRef:
         """Map ``Optional[T]`` / ``T | None`` to a nullable ``TypeRef``.
 
         Multiple non-None args (e.g. ``Union[A, B]``) are rejected — only
@@ -192,9 +214,9 @@ class ComposeTypeMapper:
             raise UnsupportedTypeError(
                 f"Union types beyond Optional[T] are not supported; got {py_type!r}"
             )
-        return self._map(args[0], force_nullable=True)
+        return self._map(args[0], force_nullable=True, is_input=is_input)
 
-    def _map_list(self, py_type: Any, force_nullable: bool) -> TypeRef:
+    def _map_list(self, py_type: Any, force_nullable: bool, *, is_input: bool = False) -> TypeRef:
         """Map ``list[T]`` / ``typing.List[T]`` to ``[T!]!``.
 
         The list itself is NON_NULL by default. ``Optional[list[T]]`` produces
@@ -207,11 +229,11 @@ class ComposeTypeMapper:
             raise UnsupportedTypeError(
                 f"Bare ``list`` without a parameter type is not supported; got {py_type!r}"
             )
-        inner_ref = self._map(args[0], force_nullable=False)
+        inner_ref = self._map(args[0], force_nullable=False, is_input=is_input)
         list_ref = list_of(inner_ref)
         return list_ref if force_nullable else non_null(list_ref)
 
-    def _map_leaf(self, py_type: Any) -> TypeRef:
+    def _map_leaf(self, py_type: Any, *, is_input: bool = False) -> TypeRef:
         """Map a leaf Python type to a TypeRef, registering TypeInfo as needed."""
         # ``None`` / ``type(None)`` should never reach here from well-formed
         # signatures, but be defensive rather than crashing deep inside _register.
@@ -251,8 +273,13 @@ class ComposeTypeMapper:
         if issubclass(py_type, enum.Enum):
             return TypeRef(kind="ENUM", name=self._register_enum(py_type))
 
-        # Pydantic models
+        # Pydantic models — dispatch on is_input so arg-side BaseModel leaves
+        # register as INPUT_OBJECT (with input_fields populated) instead of OBJECT.
         if issubclass(py_type, BaseModel):
+            if is_input:
+                return TypeRef(
+                    kind="INPUT_OBJECT", name=self._register_input_object(py_type)
+                )
             return TypeRef(kind="OBJECT", name=self._register_object(py_type))
 
         raise UnsupportedTypeError(
@@ -317,10 +344,110 @@ class ComposeTypeMapper:
             kind="OBJECT",
             description=_clean_docstring(cls.__doc__),
             fields=fields,
+            python_class=cls,
         )
         self._registry[name] = info
         self._by_python_id[id(cls)] = info
         return name
+
+    def _register_input_object(self, cls: type[BaseModel]) -> str:
+        """Register ``cls`` as a GraphQL INPUT_OBJECT and return its registry name.
+
+        Mirrors ``_register_object`` but produces ``kind="INPUT_OBJECT"`` with
+        ``input_fields`` populated from the pydantic model's fields (each as an
+        ``ArgumentInfo`` carrying pydantic defaults as GraphQL literals).
+
+        Rename-on-conflict: if ``cls.__name__`` is already taken in ``_registry``
+        AND the existing entry has ``python_class is cls`` AND ``kind == "OBJECT"``,
+        the existing entry is the return-side registration of the SAME class —
+        rename the input version to ``{Name}Input`` so both can coexist per the
+        GraphQL spec's "type name uniquely identifies kind" rule. Two distinct
+        classes sharing a name still raise ``DuplicateTypeError`` (existing
+        guard preserved).
+
+        Idempotency for the input codepath is scan-based (linear lookup of
+        ``python_class is cls`` among INPUT_OBJECTs) rather than keyed on
+        ``_by_python_id`` — that map tracks OBJECT registrations only, so the
+        same class can be referenced from both kinds without one clobbering
+        the other's id slot. Input registrations are rare (only method args),
+        so the scan cost is negligible.
+
+        Load-bearing: callers MUST ensure all return-side OBJECT registrations
+        happen before any arg-side INPUT_OBJECT registration — otherwise the
+        bare name is still free when the input registers, no rename fires, and
+        the subsequent return registration raises ``DuplicateTypeError``.
+        ``build_compose_schema`` enforces this via its two-phase structure.
+        """
+        # Idempotency: same class already registered as INPUT_OBJECT.
+        for existing in self._registry.values():
+            if existing.kind == "INPUT_OBJECT" and existing.python_class is cls:
+                return existing.name
+
+        name = cls.__name__
+        bare_collision = self._registry.get(name)
+        if bare_collision is not None:
+            if bare_collision.python_class is cls and bare_collision.kind == "OBJECT":
+                # Same class already registered as OBJECT (return-side) — rename
+                # the input version so both can coexist per the GraphQL spec.
+                name = f"{name}Input"
+            else:
+                # Two distinct classes share __name__, OR the bare name was
+                # already won by an INPUT_OBJECT (return-phase wasn't run first).
+                # Either way, keep the existing guard.
+                raise DuplicateTypeError(
+                    f"Two distinct Pydantic classes share the GraphQL name "
+                    f"'{cls.__name__}'. Rename one of them so each GraphQL "
+                    f"type maps to one Python class."
+                )
+
+        input_fields = tuple(
+            self._build_input_field_info(fname, ftype, cls)
+            for fname, ftype in _iter_field_types(cls)
+        )
+        info = TypeInfo(
+            name=name,
+            kind="INPUT_OBJECT",
+            description=_clean_docstring(cls.__doc__),
+            input_fields=input_fields,
+            python_class=cls,
+        )
+        self._registry[name] = info
+        # Intentionally NOT updating _by_python_id — it tracks OBJECT only.
+        return name
+
+    def _build_input_field_info(
+        self, field_name: str, field_type: Any, cls: type[BaseModel]
+    ) -> ArgumentInfo:
+        """Build an ``ArgumentInfo`` for one pydantic field of an INPUT_OBJECT.
+
+        ``has_default`` / ``default_value`` come from the pydantic FieldInfo.
+        Mutable defaults (``default_factory``) are treated as "no static
+        literal" (same as ``PydanticUndefined``) — they're not representable
+        as a GraphQL literal.
+        """
+        from pydantic_core import PydanticUndefined  # late import — module-load cycle guard
+
+        description = _field_description(field_type)
+        pydantic_field = cls.model_fields.get(field_name)
+        if pydantic_field is None:
+            has_default = False
+            default_value = None
+        else:
+            has_default = (
+                not pydantic_field.is_required()
+                and pydantic_field.default is not PydanticUndefined
+                # default_factory means "computed per-call" — no static literal.
+                and pydantic_field.default_factory is None
+            )
+            default_value = pydantic_field.default if has_default else None
+
+        return ArgumentInfo(
+            name=field_name,
+            type_ref=self.map_python_type_as_input(field_type),
+            has_default=has_default,
+            default_value=default_value,
+            description=description,
+        )
 
     def _build_field_info(
         self, field_name: str, field_type: Any, cls: type[BaseModel]

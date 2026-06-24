@@ -136,6 +136,7 @@ class TypeInfo:
     enum_values: tuple[EnumValueInfo, ...] = field(default_factory=tuple)
     input_fields: tuple[ArgumentInfo, ...] = field(default_factory=tuple)
     specified_by_url: str | None = None
+    python_class: type | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +250,16 @@ def build_compose_schema(app: Any) -> ComposeSchema:
     - Root ``Mutation`` OBJECT type (only when at least one service has a
       mutation method AND ``app.enable_mutation`` is True)
 
+    The build runs in **two phases**: all method return-side types are
+    registered as OBJECT *before* any arg-side types are registered as
+    INPUT_OBJECT. This ordering is load-bearing — when the same BaseModel
+    is used as both a return and an arg, the OBJECT entry must claim the
+    bare class name first so the input registration's rename-on-conflict
+    branch (in ``ComposeTypeMapper._register_input_object``) fires and
+    produces ``{Name}Input``. Interleaving per-method would crash with
+    ``DuplicateTypeError`` when an arg-using method precedes a return-using
+    method for the same class.
+
     Failures surface eagerly (startup, not query time):
     - duplicate service names → ``DuplicateServiceError``
     - duplicate method names within a service → ``DuplicateMethodError``
@@ -259,16 +270,19 @@ def build_compose_schema(app: Any) -> ComposeSchema:
     """
     # Local imports keep this module's import graph small at module load.
     from nexusx.use_case.business import UseCaseService
-    from nexusx.use_case.compose_type_mapper import ComposeTypeMapper
+    from nexusx.use_case.compose_type_mapper import ComposeTypeMapper, is_from_context_annotation
 
     mapper = ComposeTypeMapper()
 
     seen_service_names: set[str] = set()
     seen_method_signatures: set[tuple[str, str]] = set()
-    service_query_fields: list[FieldInfo] = []
-    service_mutation_fields: list[FieldInfo] = []
-    has_mutation = False
 
+    # PASS 1 — validate services + collect per-method metadata. No type
+    # registration happens here; just structural validation and gathering
+    # the (service, method_name, kind, description, return_type, func) tuples
+    # that the two phases below will iterate over.
+    ordered_services: list[type] = []
+    method_metas: list[tuple[type, str, str, str | None, Any, Any]] = []
     for service_cls in app.services:
         if not isinstance(service_cls, type) or not issubclass(service_cls, UseCaseService):
             raise ComposeSchemaError(
@@ -282,20 +296,89 @@ def build_compose_schema(app: Any) -> ComposeSchema:
                 f"app '{app.name}'. Rename one of the service classes."
             )
         seen_service_names.add(service_name)
+        ordered_services.append(service_cls)
 
-        query_fields, mutation_fields = _build_service_fields(
-            service_cls=service_cls,
-            mapper=mapper,
-            seen_signatures=seen_method_signatures,
-            enable_mutation=app.enable_mutation,
+        for method_name, meta in getattr(service_cls, "__use_case_methods__", {}).items():
+            kind = meta.get("kind", "query")
+            method = meta["method"]
+            unwrapped = inspect.unwrap(method)
+            func = unwrapped.__func__ if hasattr(unwrapped, "__func__") else unwrapped
+
+            signature_key = (service_name, method_name)
+            if signature_key in seen_method_signatures:
+                raise DuplicateMethodError(
+                    f"Method '{method_name}' appears twice on service "
+                    f"'{service_name}'."
+                )
+            seen_method_signatures.add(signature_key)
+
+            if kind == "mutation" and not app.enable_mutation:
+                continue
+
+            return_type = _get_return_type(func, service_cls, method_name)
+            if return_type is None:
+                raise MissingReturnAnnotationError(
+                    f"Method '{service_name}.{method_name}' has no return "
+                    "type annotation. All @query/@mutation methods must declare "
+                    "their return type so it can be surfaced in the GraphQL schema."
+                )
+
+            method_metas.append(
+                (service_cls, method_name, kind, meta.get("description"), return_type, func)
+            )
+
+    # PHASE A — register every method's return-side types as OBJECT.
+    # Producing the type_ref registers every BaseModel/Enum reachable from
+    # the return annotation in ``mapper._registry`` under their bare class
+    # names. The return_refs are held for the assembly step.
+    return_refs: list[TypeRef] = [
+        mapper.map_python_type(return_type)
+        for (_, _, _, _, return_type, _) in method_metas
+    ]
+
+    # PHASE B — register every method's arg-side types as INPUT_OBJECT.
+    # Runs strictly after Phase A so the rename-on-conflict branch in
+    # ``_register_input_object`` sees any pre-existing OBJECT entry for the
+    # same class and produces ``{Name}Input`` instead of crashing.
+    arg_lists: list[tuple[ArgumentInfo, ...]] = [
+        tuple(_build_method_arguments(func, mapper, is_from_context_annotation))
+        for (_, _, _, _, _, func) in method_metas
+    ]
+
+    # PHASE C — assemble FieldInfo per method and group by service.
+    service_query_fields: list[FieldInfo] = []
+    service_mutation_fields: list[FieldInfo] = []
+    has_mutation = False
+
+    query_by_service: dict[str, list[FieldInfo]] = {}
+    mutation_by_service: dict[str, list[FieldInfo]] = {}
+
+    for meta, return_ref, args in zip(method_metas, return_refs, arg_lists, strict=True):
+        service_cls, method_name, kind, description, _, _ = meta
+        field_info = FieldInfo(
+            name=method_name,
+            type_ref=return_ref,
+            description=description,
+            args=args,
         )
+        if kind == "mutation":
+            has_mutation = True
+            mutation_by_service.setdefault(service_cls.__name__, []).append(field_info)
+        else:
+            query_by_service.setdefault(service_cls.__name__, []).append(field_info)
 
-        if query_fields:
+    # Mount per-service {Service}Query / {Service}Mutation OBJECT types on the
+    # registry. Iterating over ``ordered_services`` preserves the app's declared
+    # service order in the root Query / Mutation field lists.
+    for service_cls in ordered_services:
+        service_name = service_cls.__name__
+        q_fields = query_by_service.get(service_name, [])
+        if q_fields:
             service_query_type = TypeInfo(
                 name=f"{service_name}Query",
                 kind="OBJECT",
                 description=f"Query entry points for {service_name}.",
-                fields=tuple(query_fields),
+                fields=tuple(q_fields),
             )
             mapper._registry[service_query_type.name] = service_query_type
             service_query_fields.append(
@@ -308,13 +391,13 @@ def build_compose_schema(app: Any) -> ComposeSchema:
                 )
             )
 
-        if mutation_fields:
-            has_mutation = True
+        m_fields = mutation_by_service.get(service_name, [])
+        if m_fields:
             service_mutation_type = TypeInfo(
                 name=f"{service_name}Mutation",
                 kind="OBJECT",
                 description=f"Mutation entry points for {service_name}.",
-                fields=tuple(mutation_fields),
+                fields=tuple(m_fields),
             )
             mapper._registry[service_mutation_type.name] = service_mutation_type
             service_mutation_fields.append(
@@ -349,65 +432,6 @@ def build_compose_schema(app: Any) -> ComposeSchema:
         registry=mapper._registry,
         has_mutation=bool(service_mutation_fields),
     )
-
-
-def _build_service_fields(
-    service_cls: type,
-    mapper: Any,
-    seen_signatures: set[tuple[str, str]],
-    enable_mutation: bool,
-) -> tuple[list[FieldInfo], list[FieldInfo]]:
-    """Walk ``service_cls.__use_case_methods__`` and build (query_fields, mutation_fields).
-
-    Filters mutations when ``enable_mutation`` is False. Validates return
-    annotations. Detects duplicate (service, method) signatures.
-    """
-    from nexusx.use_case.compose_type_mapper import is_from_context_annotation
-
-    methods = getattr(service_cls, "__use_case_methods__", {})
-    query_fields: list[FieldInfo] = []
-    mutation_fields: list[FieldInfo] = []
-
-    for method_name, meta in methods.items():
-        kind = meta.get("kind", "query")
-        method = meta["method"]
-        unwrapped = inspect.unwrap(method)
-        func = unwrapped.__func__ if hasattr(unwrapped, "__func__") else unwrapped
-
-        signature_key = (service_cls.__name__, method_name)
-        if signature_key in seen_signatures:
-            raise DuplicateMethodError(
-                f"Method '{method_name}' appears twice on service "
-                f"'{service_cls.__name__}'."
-            )
-        seen_signatures.add(signature_key)
-
-        if kind == "mutation" and not enable_mutation:
-            continue
-
-        return_type = _get_return_type(func, service_cls, method_name)
-        if return_type is None:
-            raise MissingReturnAnnotationError(
-                f"Method '{service_cls.__name__}.{method_name}' has no return "
-                "type annotation. All @query/@mutation methods must declare "
-                "their return type so it can be surfaced in the GraphQL schema."
-            )
-
-        return_ref = mapper.map_python_type(return_type)
-        args = _build_method_arguments(func, mapper, is_from_context_annotation)
-
-        field_info = FieldInfo(
-            name=method_name,
-            type_ref=return_ref,
-            description=meta.get("description"),
-            args=tuple(args),
-        )
-        if kind == "mutation":
-            mutation_fields.append(field_info)
-        else:
-            query_fields.append(field_info)
-
-    return query_fields, mutation_fields
 
 
 def _get_return_type(func: Any, service_cls: type, method_name: str) -> Any:
@@ -469,7 +493,10 @@ def _build_method_arguments(
         if is_from_context_annotation(annotation):
             continue
         has_default = param.default is not inspect.Parameter.empty
-        type_ref = mapper.map_python_type(annotation)
+        # Method-arg types route through the input codepath so BaseModel leaves
+        # register as INPUT_OBJECT (with input_fields populated) rather than
+        # OBJECT. Scalars / enums / list / Optional wrappers are unaffected.
+        type_ref = mapper.map_python_type_as_input(annotation)
         args.append(
             ArgumentInfo(
                 name=name,
@@ -743,9 +770,13 @@ def _render_method_sdl(
     if method_field is None or owning_type_name is None:
         return None
 
-    # Collect transitive closure of types reachable from method_field.type_ref.
+    # Collect transitive closure of types reachable from the method's return
+    # type AND from each arg's type. Arg seeding is required so INPUT_OBJECT
+    # types referenced by args appear in the SDL alongside the return closure.
     closure_names: set[str] = set()
     _collect_closure(method_field.type_ref, registry, closure_names)
+    for arg in method_field.args:
+        _collect_closure(arg.type_ref, registry, closure_names)
 
     # Build the filtered service-type (only the one method).
     owning_type = registry[owning_type_name]
@@ -797,7 +828,12 @@ def _collect_closure(
         for f in info.fields:
             for arg in f.args:
                 _collect_closure(arg.type_ref, registry, visited)
-    # SCALAR / ENUM / INPUT_OBJECT: leaf, no further recursion needed.
+    elif info.kind == "INPUT_OBJECT":
+        # Input fields can reference nested INPUT_OBJECTs / ENUMs — recurse so
+        # the method SDL expands the full input closure (not just the outer type).
+        for f in info.input_fields:
+            _collect_closure(f.type_ref, registry, visited)
+    # SCALAR / ENUM: leaf, no further recursion needed.
 
 
 def _emit_type_sdl(t: TypeInfo, lines: list[str]) -> None:
@@ -815,13 +851,20 @@ def _emit_type_sdl(t: TypeInfo, lines: list[str]) -> None:
         return
     keyword = "type" if t.kind == "OBJECT" else "input"
     lines.append(f'{keyword} {t.name} {{')
-    for f in t.fields:
-        arg_str = ""
-        if f.args:
-            arg_str = '(' + ", ".join(
-                f"{a.name}: {_type_ref_to_sdl(a.type_ref)}"
-                + (f" = {_sdl_literal(a.default_value)}" if a.has_default else "")
-                for a in f.args
-            ) + ")"
-        lines.append(f'  {f.name}{arg_str}: {_type_ref_to_sdl(f.type_ref)}')
+    if t.kind == "INPUT_OBJECT":
+        # Input fields are ArgumentInfo — render ``name: Type`` with an optional
+        # ``= literal`` default clause (no method-arg parenthesization here).
+        for f in t.input_fields:
+            tail = f" = {_sdl_literal(f.default_value)}" if f.has_default else ""
+            lines.append(f'  {f.name}: {_type_ref_to_sdl(f.type_ref)}{tail}')
+    else:
+        for f in t.fields:
+            arg_str = ""
+            if f.args:
+                arg_str = '(' + ", ".join(
+                    f"{a.name}: {_type_ref_to_sdl(a.type_ref)}"
+                    + (f" = {_sdl_literal(a.default_value)}" if a.has_default else "")
+                    for a in f.args
+                ) + ")"
+            lines.append(f'  {f.name}{arg_str}: {_type_ref_to_sdl(f.type_ref)}')
     lines.append('}')
