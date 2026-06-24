@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.1.2
+
+Port of pydantic-resolve v5.10.2 (`commit 184886d`) — three INPUT_OBJECT correctness fixes for the UseCase compose surface. Before this release, nexusx registered every Pydantic `BaseModel` as a GraphQL `OBJECT` regardless of whether it appeared as a method return or a method argument. That violated the GraphQL spec (input types must be `INPUT_OBJECT`) and crashed with `DuplicateTypeError` when the same class was used as both return and arg.
+
+### Bug Fix: BaseModel 方法参数现在注册为 INPUT_OBJECT（US1）
+
+`@mutation create_task(payload: CreateTaskInput)` 之前在 schema 里把 `CreateTaskInput` 登记成 `OBJECT`，违反 GraphQL spec（field arg 必须是 `INPUT_OBJECT`）。GraphiQL 拒绝渲染，`graphql.build_client_schema` 校验失败。
+
+**行为：**
+- 新增 `ComposeTypeMapper.map_python_type_as_input(py_type)` 公共入口；`_build_method_arguments` 改走这条路径
+- `_map_leaf` 根据 `is_input` 把 BaseModel 叶子分派到新加的 `_register_input_object`（产出 `kind=INPUT_OBJECT` + 填充 `input_fields`）
+- 每个 input field 的 `default_value` 来自 pydantic field default，渲染成 GraphQL literal（`5` / `null` / `"hi"` / `true`），与现有 method-arg default 序列化路径一致
+- mutable defaults（`default_factory=...`）依然不支持，按"无静态字面量"处理
+
+**Changes：**
+- `src/nexusx/use_case/compose_type_mapper.py`: 新增 `map_python_type_as_input` / `_register_input_object` / `_build_input_field_info`；`_map` / `_map_optional` / `_map_list` / `_map_leaf` 全链路加 `is_input` 关键字参数；import `ArgumentInfo` + `pydantic_core.PydanticUndefined`
+- `src/nexusx/use_case/compose_schema.py`: `_build_method_arguments` 改调 `map_python_type_as_input`
+- `tests/test_compose_introspection.py::TestInputTypeEdgeCasesUS1`: 4 个新测试覆盖基本登记、默认值字面量、Optional/list 字段 nullability
+
+### Bug Fix: 同一 BaseModel 同时作为返回和参数不再崩溃（US2）
+
+`upsert_task(patch: TaskDTO) -> TaskDTO` 之前直接 `DuplicateTypeError` 崩掉（class name 已被 return 侧占住）。GraphQL spec 禁止一个类型同时是 OBJECT 和 INPUT_OBJECT。
+
+**行为：**
+- `build_compose_schema` 重构成两阶段：先跨所有 service 登记所有 return 侧 OBJECT，再跨所有 service 登记所有 arg 侧 INPUT_OBJECT。phase 顺序 load-bearing —— 只有 OBJECT 先占住 bare class name，input 侧重命名分支才能正确触发
+- `_register_input_object` 在 bare name 已被 OBJECT 占住且 `python_class is cls` 时，自动重命名为 `{Name}Input`（例如 `TaskDTO` → `TaskDTOInput`）
+- distinct-class 同名（不同 Python 类共享 `__name__`）依然 `DuplicateTypeError`，原有 guard 不变
+- 嵌套 input 闭包一致性：`OuterInput.inner: InnerInput` 这种字段也走 `map_python_type_as_input`，嵌套的 `InnerInput` 自动登记为 INPUT_OBJECT；如果 `InnerInput` 也被用作 return，则 leaf name 一致地重命名为 `InnerInputInput`
+
+**Changes：**
+- `src/nexusx/use_case/compose_schema.py`: `build_compose_schema` 整体重构成 pass-1 收集元数据 + phase-A 登记返回 + phase-B 登记 args + phase-C 装配 FieldInfo；删除旧的 `_build_service_fields` 单遍实现
+- `src/nexusx/use_case/compose_type_mapper.py`: `_register_input_object` 加 rename-on-conflict 分支；幂等性检查改扫描式（不再依赖 `_by_python_id`，避免 OBJECT 和 INPUT_OBJECT 互相覆盖）
+- `tests/test_compose_introspection.py::TestInputTypeEdgeCasesUS2`: 2 个新测试覆盖同名冲突 + 嵌套 input
+
+### Bug Fix: 方法级 SDL 现在展开 INPUT_OBJECT 类型（US3）
+
+`render_method_sdl(service, method)` 之前只收集返回类型的闭包，且 `_collect_closure` 把 INPUT_OBJECT 当叶节点不递归。结果 SDL 里引用了 `input CreateTaskInput { ... }` 却从不定义它 —— AI agent / 文档读者看到的 SDL 是残缺的。
+
+**行为：**
+- `_collect_closure` 增加 INPUT_OBJECT 分支：递归走 `input_fields[*].type_ref`
+- `_render_method_sdl` 同时从返回 type_ref 和每个 arg 的 type_ref 起步收集闭包
+- `_emit_type_sdl` 对 `kind=INPUT_OBJECT` 改读 `t.input_fields`（之前无条件读 `t.fields`），并渲染 `name: Type = literal` 默认子句
+
+**Changes：**
+- `src/nexusx/use_case/compose_schema.py`: `_collect_closure` / `_render_method_sdl` / `_emit_type_sdl` 三处扩展
+- `tests/test_compose_introspection.py::TestInputTypeEdgeCasesUS3`: 1 个新测试验证 SDL 含 `input MDLInput { ... }` 块及字段展开
+
+### Spec-Compliance Gate: GraphiQL canonical introspection round-trip
+
+`tests/test_compose_introspection.py::TestGraphiQLCompatibility::test_canonical_graphiql_introspection_query_works` —— 把 GraphiQL 启动时发送的标准 introspection query 喂给 `compose_introspect`，再把结果交给 `graphql.build_client_schema`。这是 FR-008 / SC-002 的硬性闸：任何一个 spec 违规（INPUT_OBJECT 字段错放在 OBJECT 上、dangling type ref、malformed default）都会让 `build_client_schema` 抛错。
+
+**Regression invariants** (`TestRegressionInvariants`): 显式断言"没有 BaseModel 参数的 app 不会引入任何 INPUT_OBJECT TypeInfo" + "SCALAR/ENUM 的 TypeInfo 永远不带 `python_class`"，把 FR-009 / SC-003 的不变量钉死，防止未来重构意外把 OBJECT 翻成 INPUT_OBJECT。
+
+---
+
 ## 3.1.1
 
 ### Bug Fix: `_orm_to_dto` 保留 DB NULL（修复 BUG_1_2）
