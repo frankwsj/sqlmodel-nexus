@@ -1,234 +1,1054 @@
 # nexusx — LLM Reference
 
-> nexusx：从 SQLModel 类自动生成 GraphQL API，提供 Core API 声明式数据组装，以及 MCP 服务。
-> 渐进式框架 — ER Diagram → GraphQL API → 声明式数据组装。
+> nexusx：从 SQLModel 类自动生成 GraphQL API；为 API 响应组装提供声明式 DTO + 关系加载；并把业务服务层暴露为 MCP / REST / JSON-RPC / CLI。
+> 渐进式框架 — ER Diagram → GraphQL API → 声明式响应组装 → 业务服务层。
 
-版本：1.3.1 | Python >= 3.10 | 许可证：MIT
+版本：**3.1.1** | Python >= 3.10 | 许可证：MIT
+
+> 本文件是 AI 可独立读写的权威参考。每个 API 都带"何时用 + 签名 + 可运行示例"。
+> 来源权威：`src/nexusx/__init__.py` 的 `__all__` 与 `CHANGELOG.md`。任何与此文件冲突的代码以代码为准。
 
 ---
 
-## 1. 概念映射
+## 0. 三十秒决策树
 
-### GraphQL 模式
+```
+你的目标？
+│
+├─ 我有 SQLModel 实体，想直接暴露成 GraphQL API
+│   └─→ §4 GraphQL 模式（@query + GraphQLHandler）
+│
+├─ 我有 SQLModel 实体，想精细控制 API 响应的形状（嵌套 DTO、派生字段、聚合）
+│   └─→ §5 Core API 模式（DefineSubset + ErManager + Resolver）
+│
+├─ 我有业务逻辑层（不想直接暴露实体），想同时给 AI / HTTP / CLI 用
+│   └─→ §6 UseCase 模式（UseCaseService + 4 种暴露入口）
+│
+├─ 我只想让 AI 通过 MCP 调用我现有的 GraphQL API
+│   └─→ §7 GraphQL over MCP（create_simple_mcp_server）
+│
+└─ 我只想生成 ER 图做可视化
+    └─→ §8 ErDiagram
+```
 
-| 用户概念 | 框架概念 | 代码入口 |
-|----------|----------|----------|
-| 定义数据模型 | SQLModel + Relationship | `class MyEntity(BaseEntity, table=True)` |
-| 暴露查询接口 | `@query` 装饰器 | `@query` on class method |
-| 暴露变更接口 | `@mutation` 装饰器 | `@mutation` on class method |
-| 自动 CRUD | `AutoQueryConfig` | `GraphQLHandler(auto_query_config=...)` |
-| 关系加载 | DataLoader 批量查询 | `session_factory` 参数 |
-| 列表分页 | ROW_NUMBER 窗口函数 | `enable_pagination=True` |
-| AI 集成 | MCP Server | `config_simple_mcp_server()` |
-| 交互调试 | GraphiQL | `handler.get_graphiql_html()` |
+**模式可组合**：A + B 经常一起用（实体同时暴露原始 GraphQL 和组装后的 DTO）；C 是 B 之上更高层的封装，提供 MCP/REST/CLI 多入口而把响应组装逻辑写在 service 内部。
 
-### Core API 模式
+---
 
-| 用户概念 | 框架概念 | 代码入口 |
-|----------|----------|----------|
-| 构建 DTO | `DefineSubset` + `SubsetConfig` | `class MyDTO(DefineSubset)` |
-| 关系管理 | `ErManager` | `ErManager(base=..., session_factory=...)` |
-| 数据遍历 | `Resolver` | `er.create_resolver()` |
-| 声明加载依赖 | `Loader` | `def resolve_x(self, loader=Loader('rel_name'))` |
-| 派生字段 | `post_*` 方法 | `def post_count(self)` |
-| 祖先上下文传递 | `ExposeAs` | `Annotated[str, ExposeAs('key')]` |
-| 后代值聚合 | `SendTo` + `Collector` | `Annotated[User, SendTo('name')]` |
-| 自定义关系 | `Relationship` | `__relationships__` 列表 |
-| 可视化 ER 图 | `ErDiagram` | `ErDiagram.from_sqlmodel(entities)` |
+## 1. 心智模型
 
-### RPC + Voyager 模式
+nexusx 有**三个互相独立但可组合的模式**。理解它们的边界是用好框架的前提。
 
-| 用户概念 | 框架概念 | 代码入口 |
-|----------|----------|----------|
-| 业务服务定义 | `RpcService` | `class MyService(RpcService)` |
-| RPC MCP 服务 | `create_rpc_mcp_server` | `create_rpc_mcp_server(services=...)` |
-| 交互式可视化 | `create_rpc_voyager` | `create_rpc_voyager(services=..., er_manager=...)` |
+### 1.1 三个模式
+
+| 模式 | 解决的问题 | 入口符号 | 输出形状由谁决定 |
+|------|----------|---------|----------------|
+| **GraphQL 模式**（§4） | 把 SQLModel 实体直接暴露成 GraphQL API | `GraphQLHandler` | GraphQL 查询字符串（客户端选字段） |
+| **Core API 模式**（§5） | 服务端声明式组装 API 响应（DTO 树） | `DefineSubset` + `ErManager` + `Resolver` | DTO 类定义（服务端固定） |
+| **UseCase 模式**（§6） | 业务服务层一次定义、多入口暴露 | `UseCaseService` + `UseCaseAppConfig` | service 方法签名 + 调用方选字段 |
+
+### 1.2 模式之间的关系
+
+- **GraphQL 模式 vs Core API 模式**：互斥的响应组装范式。GraphQL 让客户端选字段；Core API 让服务端用 DTO 固定形状。两者可以共存于同一 FastAPI app（不同 endpoint）。
+- **Core API 模式 vs UseCase 模式**：UseCase 是 Core API 的**上层封装**。UseCase service 方法内部通常调 `Resolver().resolve(dtos)` 完成组装，外部额外提供 MCP / REST / JSON-RPC / CLI 入口。UseCase **不替代** Core API，而是消费它。
+- **GraphQL 模式 vs UseCase 模式**：UseCase 3.0+ 内部生成自己的 GraphQL schema（`ComposeSchema`），与 GraphQL 模式的 `GraphQLHandler` 是**两套独立的 schema**，不共享。
+
+### 1.3 启动时 vs per-request 边界（关键）
+
+这是 AI 最容易写错的边界。下列对象有严格的生命周期约定：
+
+| 对象 | 何时创建 | 何时用 | 复用 |
+|------|---------|-------|------|
+| `GraphQLHandler` | 应用启动**一次** | `handler.execute(query)` 每次 request | 跨 request 复用（无状态） |
+| `ErManager` | 应用启动**一次** | `er.create_resolver()` 启动时调一次 | 跨 request 复用 |
+| `Resolver` **类**（`er.create_resolver()` 返回值） | 应用启动**一次** | 持有 ErManager 引用 | 跨 request 复用 |
+| `Resolver` **实例**（`Resolver(context=...)`） | **每次 request** | `await resolver.resolve(dtos)` | **不要跨 request 复用**——DataLoader 缓存和 contextvar 状态会污染 |
+| `session_factory` | 应用启动一次 | 每次 DB 访问创建 session | 工厂本身复用 |
+
+> 如果在 `asyncio.gather` 中并发调用 `resolver.resolve()`，**每个分支用各自的 Resolver 实例**。
+
+### 1.4 异常约定
+
+- **构造期**（`GraphQLHandler()`、`ErManager()`、`build_compose_schema()`、`Resolver(loader_instances=...)`）：配置错误立即 raise，绝不进入执行路径
+- **执行期 resolve_***：抛出的异常向上传播。GraphQL 模式下被 `QueryExecutor` 捕获，写入 response `errors[]` **并 logger.exception**（3.1.1+）；Core API 模式下直接抛给 caller
+- **返回 None vs 空 list**：由用户代码决定。框架不做 None ↔ [] 转换
 
 ---
 
 ## 2. 安装
 
 ```bash
-pip install nexusx
-pip install nexusx[fastmcp]  # 包含 MCP 支持
+pip install nexusx                                   # 核心（GraphQL + Core API）
+pip install nexusx[fastmcp]                          # + GraphQL over MCP / UseCase MCP
+pip install nexusx[cli]                              # + UseCase Typer CLI（typer）
+pip install nexusx[fastmcp,cli]                      # 全装
 ```
 
 ---
 
-## 3. API Reference
+## 3. 公共预备：session 工厂与启动模板
 
-### 3.1 `@query`
+下面三个东西在所有模式的例子里都会用到，**统一定义在这里**，后续示例不再重复。
 
-将 class method 标记为 GraphQL 查询。
+### 3.1 session_factory（异步）
+
+`session_factory` 是一个** callable**，调用后返回 async session context manager。SQLAlchemy / SQLModel 的标准做法：
 
 ```python
-from nexusx import query
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+engine = create_async_engine("sqlite+aiosqlite:///./app.db")
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# async_session 本身就是 session_factory：
+#   async with async_session() as session: ...
+#
+# 也可以包一层叫 get_session，效果等价：
+async def get_session():
+    async with async_session() as session:
+        yield session
+```
+
+> 框架内部调用方式是 `session_context = session_factory(); if isawaitable: await it`。两种写法都被支持。
+
+### 3.2 BaseEntity 与建表
+
+```python
+from sqlmodel import SQLModel
+
+class BaseEntity(SQLModel):
+    """所有实体的共同基类。GraphQLHandler/AutoQueryConfig 用它做实体发现。"""
+    pass
+
+# 启动时建表（dev / 测试用；生产用 alembic）
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+```
+
+### 3.3 应用启动钩子（FastAPI 标准模板）
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    # 这里创建 GraphQLHandler / ErManager / Resolver 类等启动期对象
+    app.state.handler = GraphQLHandler(base=BaseEntity, session_factory=async_session)
+    yield
+
+app = FastAPI(lifespan=lifespan)
+```
+
+---
+
+## 4. 模式 A：GraphQL API
+
+### 4.1 何时用
+
+- 你想直接把 SQLModel 实体暴露成 GraphQL，让**客户端**决定要哪些字段
+- 实体之间的关系简单（SQLModel Relationship 就够了）
+- 不想在服务端为每个 endpoint 写 DTO
+
+如果响应形状需要服务端强控制（敏感字段过滤、派生字段、跨表聚合），用 **§5 Core API**。
+
+### 4.2 `@query` / `@mutation` 装饰器
+
+```python
+from sqlmodel import Field, select
+from nexusx import query, mutation
 
 class User(BaseEntity, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
 
     @query
-    async def get_all(cls, limit: int = 10) -> list['User']:
-        """Docstring becomes GraphQL field description."""
-        async with get_session() as session:
+    async def get_all(cls, limit: int = 10) -> list["User"]:
+        """Docstring → GraphQL field description."""
+        async with async_session() as session:
             return (await session.exec(select(cls).limit(limit))).all()
-```
 
-规则：
-- 第一个参数必须是 `cls`（自动转为 classmethod）
-- 返回类型决定 GraphQL 字段类型（`list[User]` → `[User!]!`，`Optional[User]` → `User`）
-- 方法参数成为 GraphQL 字段参数
-- docstring 成为字段描述
-- 生成的字段名：`{EntityName}{MethodName}`（如 `userGetAll`）
-
-### 3.2 `@mutation`
-
-与 `@query` 用法相同，标记为 GraphQL mutation。
-
-```python
-from nexusx import mutation
-
-class User(BaseEntity, table=True):
     @mutation
-    async def create(cls, name: str, email: str) -> 'User':
-        """Create a new user."""
-        async with get_session() as session:
-            user = cls(name=name, email=email)
+    async def create(cls, name: str) -> "User":
+        async with async_session() as session:
+            user = cls(name=name)
             session.add(user)
             await session.commit()
             await session.refresh(user)
             return user
 ```
 
-支持 Input 类型参数：
+**规则：**
+- 装饰器自动把方法转为 classmethod；第一个参数**必须**是 `cls`
+- 返回类型决定 GraphQL 字段类型：`list[User]` → `[User!]!`，`User | None` → `User`
+- 方法参数成为 GraphQL 字段参数；SQLModel / pydantic BaseModel 子类自动成为 Input 类型
+- 生成的字段名：`{Entity}{MethodName}`（camelCase 化：`User.get_all` → `userGetAll`）
+- 实体发现：**有** `@query`/`@mutation` 的类被主动发现；仅被 Relationship 引用的类被动纳入
 
-```python
-class CreateUserInput(BaseModel):
-    name: str
-    email: str
-
-class User(BaseEntity, table=True):
-    @mutation
-    async def create(cls, input: CreateUserInput) -> 'User':
-        ...
-```
-
-### 3.3 `GraphQLHandler`
-
-核心类，负责实体发现、SDL 生成、查询执行。
+### 4.3 `GraphQLHandler`
 
 ```python
 from nexusx import GraphQLHandler, AutoQueryConfig
 
 handler = GraphQLHandler(
-    base=BaseEntity,                           # 必填：SQLModel 基类
-    session_factory=async_session,             # DataLoader 查询需要
-    enable_pagination=True,                    # 列表关系分页
-    auto_query_config=AutoQueryConfig(
+    base=BaseEntity,                      # 必填：实体发现基类
+    session_factory=async_session,        # 关系加载必需
+    enable_pagination=True,               # 列表关系分页（默认 False）
+    auto_query_config=AutoQueryConfig(    # 可选：自动 by_id / by_filter
         session_factory=async_session,
-        default_limit=10,
-        generate_by_id=True,
-        generate_by_filter=True,
+        default_limit=20,
     ),
-    query_description="My Query type",        # 可选
-    mutation_description="My Mutation type",   # 可选
+    query_description="My Query type",    # 可选
+    mutation_description="My Mutation",   # 可选
 )
 ```
 
-**参数说明：**
+**参数：**
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `base` | `type` | 是 | SQLModel 基类，用于实体发现 |
-| `session_factory` | `Callable | None` | 否 | 异步 session 工厂。关系加载必需 |
-| `enable_pagination` | `bool` | 否 | 启用列表关系分页，默认 False |
-| `auto_query_config` | `AutoQueryConfig | None` | 否 | 自动生成 by_id/by_filter 查询 |
-| `query_description` | `str | None` | 否 | Query 类型描述 |
-| `mutation_description` | `str | None` | 否 | Mutation 类型描述 |
+| `session_factory` | `Callable | None` | 否 | 异步 session 工厂；实体有 Relationship 时**必需**。若提供 `auto_query_config`，可省略（fallback 到其 session_factory） |
+| `enable_pagination` | `bool` | 否 | 列表关系返回 `{items, pagination}` 包装（默认 False） |
+| `auto_query_config` | `AutoQueryConfig | None` | 否 | 自动生成 `entityById` / `entityByFilter` |
+| `query_description` / `mutation_description` | `str | None` | 否 | SDL 中 Query/Mutation 类型描述 |
 
 **方法：**
 
 ```python
-# 执行 GraphQL 查询
-result: dict = await handler.execute(
-    query: str,
-    variables: dict | None = None,
-    operation_name: str | None = None,
-)
-# 返回 {"data": {...}} 或 {"data": {...}, "errors": [...]}
+result: dict = await handler.execute(query, variables=None, operation_name=None)
+# → {"data": {...}} 或 {"data": {...}, "errors": [...]}
 
-# 获取 SDL
 sdl: str = handler.get_sdl()
-
-# 获取 GraphiQL 页面
 html: str = handler.get_graphiql_html(endpoint="/graphql")
 ```
 
-### 3.4 `AutoQueryConfig`
+### 4.4 `AutoQueryConfig`
 
-自动为所有实体生成标准查询。
+为**所有** `base` 子类自动生成两个标准查询：
+
+| GraphQL 字段 | 签名 | 说明 |
+|-------------|------|------|
+| `entityById` | `(id: PK!): Entity` | 单主键查单条 |
+| `entityByFilter` | `(filter: EntityFilterInput, limit: Int): [Entity!]!` | 字段精确匹配 |
 
 ```python
 from nexusx import AutoQueryConfig
 
 config = AutoQueryConfig(
-    session_factory=async_session,    # 必填
-    default_limit=10,                 # by_filter 默认 limit
-    generate_by_id=True,              # 生成 by_id 查询
-    generate_by_filter=True,          # 生成 by_filter 查询
-    enabled=True,                     # 总开关
+    session_factory=async_session,   # 必填
+    default_limit=10,                # by_filter 默认 limit
+    generate_by_id=True,
+    generate_by_filter=True,
+    enabled=True,                    # 总开关
 )
 ```
 
-**生成的查询（以 User 实体为例）：**
+- `EntityFilterInput` 自动生成，所有字段可选，仅非 None 值作为 WHERE 条件（精确匹配）
+- `entityById` **仅支持单主键实体**；复合主键实体会跳过
+- 想脱离 `GraphQLHandler` 单独注册标准查询（如自定义 handler 流程）时，可直接调 `add_standard_queries(entities, config)`
 
-| GraphQL 字段 | 签名 | 说明 |
-|-------------|------|------|
-| `userById` | `(id: Int!): User` | 按主键查单个 |
-| `userByFilter` | `(filter: UserFilterInput, limit: Int): [User!]!` | 按字段精确匹配过滤 |
-
-**FilterInput：** 自动生成，所有字段可选，仅非 None 值作为 WHERE 条件（精确匹配）。
-
-**约束：** `by_id` 要求实体有且仅有一个主键字段。复合主键实体会跳过 by_id。
-
-### 3.5 MCP 集成
-
-#### 单应用 MCP Server
+### 4.5 关系加载（DataLoader 自动批量）
 
 ```python
-from nexusx.mcp import config_simple_mcp_server
+from typing import Optional
+from sqlmodel import Relationship
 
-mcp = config_simple_mcp_server(
+class User(BaseEntity, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    posts: list["Post"] = Relationship(
+        back_populates="author",
+        sa_relationship_kwargs={"order_by": "Post.id"},   # 分页时必需
+    )
+
+class Post(BaseEntity, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    author_id: int = Field(foreign_key="user.id")
+    author: Optional[User] = Relationship(back_populates="posts")
+```
+
+关系通过 DataLoader 自动批量加载，**无需手动 eager loading**。每层收集所有 FK 值，发一次批量 SQL。
+
+### 4.6 分页（`enable_pagination=True`）
+
+启用后，列表关系自动包装为 Result 类型：
+
+```graphql
+type PostResult { items: [Post!]!, pagination: Pagination! }
+type Pagination { has_more: Boolean!, total_count: Int }
+```
+
+查询时传 `limit` / `offset`：
+
+```graphql
+{
+  userGetAll(limit: 5) {
+    id
+    posts(limit: 3, offset: 0) {
+      items { title author { name } }
+      pagination { has_more total_count }
+    }
+  }
+}
+```
+
+**约束**：分页要求列表 Relationship 配置 `sa_relationship_kwargs={"order_by": "Entity.column"}`，否则 `GraphQLHandler` 构造期抛错。底层用 `ROW_NUMBER()` 窗口函数，一条 SQL 为所有父实体取各自的分页数据。
+
+### 4.7 完整可运行例子：GraphQL 模式
+
+```python
+# app_graphql.py — 保存为文件后：uvicorn app_graphql:app --reload
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlmodel import Field, SQLModel, select
+from nexusx import query, GraphQLHandler
+
+engine = create_async_engine("sqlite+aiosqlite:///./app.db")
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+class BaseEntity(SQLModel): pass
+
+class User(BaseEntity, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+
+    @query
+    async def get_all(cls, limit: int = 10) -> list["User"]:
+        async with async_session() as session:
+            return (await session.exec(select(cls).limit(limit))).all()
+
+handler = GraphQLHandler(base=BaseEntity, session_factory=async_session)
+
+class GQLRequest(BaseModel):
+    query: str
+
+app = FastAPI()
+
+@app.on_event("startup")
+async def _startup():
+    async with engine.begin() as c:
+        await c.run_sync(SQLModel.metadata.create_all)
+
+@app.get("/graphql", response_class=HTMLResponse)
+async def graphiql():
+    return handler.get_graphiql_html(endpoint="/graphql")
+
+@app.post("/graphql")
+async def graphql(req: GQLRequest):
+    return await handler.execute(req.query)
+```
+
+测试：浏览器开 `http://localhost:8000/graphql`，跑 `{ userGetAll { id name } }`。
+
+---
+
+## 5. 模式 B：Core API（响应组装）
+
+### 5.1 何时用
+
+- 服务端要**固定** API 响应形状（不让客户端选字段）
+- 需要派生字段（`post_*`）、跨表聚合（`Collector`）、祖先上下文传递（`ExposeAs`）
+- 同一份业务数据在不同 endpoint 有不同的 DTO 投影
+
+如果只需要把实体直出 GraphQL，用 **§4**。如果想要多入口（MCP / REST / CLI），在 Core API 之上叠 **§6 UseCase**。
+
+### 5.2 `DefineSubset`：从实体生成 DTO
+
+```python
+from nexusx import DefineSubset, SubsetConfig
+
+# 推荐：SubsetConfig 声明式
+class UserSummary(DefineSubset):
+    __subset__ = SubsetConfig(
+        kls=User,                          # 源 SQLModel 实体
+        fields=["id", "name"],             # 包含字段（与 omit_fields 互斥）
+    )
+
+# 等价的元组语法（更短，但功能少）
+class UserSummary2(DefineSubset):
+    __subset__ = (User, ("id", "name"))
+```
+
+**`SubsetConfig` 参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `kls` | `type` | 源 SQLModel 实体类 |
+| `fields` | `list[str] \| "all"` | 包含字段名；`"all"` 包含全部 |
+| `omit_fields` | `list[str]` | 排除字段（与 `fields` 互斥） |
+| `excluded_fields` | `list[str]` | DTO 中存在但序列化时隐藏（`exclude=True`） |
+| `expose_as` | `list[tuple[str, str]]` | `(field, alias)` 对，等价于 `ExposeAs` 注解 |
+| `send_to` | `list[tuple[str, str]]` | `(field, collector)` 对，等价于 `SendTo` 注解 |
+
+**FK 字段处理：** `__subset__` 中声明的 FK 字段（如 `owner_id`）自动 `exclude=True`，序列化隐藏，但内部 `self.owner_id` 在 `resolve_*` 中可访问。
+
+**关系字段声明规则（关键）：**
+- 关系字段声明在类体中，**不在** `__subset__` 内
+- 类型**必须**是 DTO 类型（`DefineSubset` 子类），**不能**直接用 SQLModel 实体
+
+```python
+# ❌ 错：直接用 SQLModel 实体
+class TaskSummary(DefineSubset):
+    __subset__ = (Task, ("id", "title"))
+    owner: User | None = None          # TypeError
+
+# ✅ 对：用 DTO
+class TaskSummary(DefineSubset):
+    __subset__ = (Task, ("id", "title", "owner_id"))
+    owner: UserSummary | None = None
+```
+
+### 5.3 `ErManager` + `Resolver`
+
+```python
+from nexusx import ErManager
+
+# 启动期：创建 ErManager（一次）
+er = ErManager(base=SQLModel, session_factory=async_session)
+# 或显式指定实体：ErManager(entities=[User, Task], session_factory=async_session)
+
+# 启动期：创建 Resolver 类（一次）
+Resolver = er.create_resolver()
+
+# 每次 request：创建实例
+resolver = Resolver(context={"user_id": 1})
+result = await resolver.resolve(dtos)   # dtos: 单个 DTO 或 list[DTO]
+```
+
+**`ErManager` 参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `base` | `type \| None` | 二选一 | SQLModel 基类，自动发现子类 |
+| `entities` | `list[type] \| None` | 二选一 | 显式实体列表（与 `base` 互斥） |
+| `session_factory` | `Callable` | 是 | 异步 session 工厂 |
+| `enable_pagination` | `bool` | 否 | 启用列表关系分页（默认 False） |
+| `split_loader_by_type` | `bool` | 否 | 按 DTO 类型拆分 Loader 实例（默认 False） |
+
+**ErManager 方法：**
+
+```python
+er.get_relationships(entity=User)               # → dict[str, RelationshipInfo]
+er.get_all_entities()                           # → list[type[SQLModel]]
+er.get_relationship(entity=User, name="posts")  # → RelationshipInfo | None
+er.create_resolver()                            # → Resolver 类（启动期调一次）
+```
+
+**Resolver 实例方法：**
+
+```python
+await resolver.resolve(node)   # node: BaseModel | list[BaseModel] → 同形状返回
+```
+
+`resolve()` 在内部 clear DataLoader 缓存与 collector map（**所以实例不要跨 request 复用**）。返回的 DTO 对象可直接 `return` 给 FastAPI endpoint，Pydantic 自动序列化。
+
+### 5.4 `resolve_*` 方法与 `Loader`
+
+```python
+from nexusx import Loader
+
+class PostSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=Post, fields=["id", "title", "author_id"])
+    author: UserSummary | None = None
+
+    def resolve_author(self, loader=Loader("author")):
+        return loader.load(self.author_id)
+```
+
+**`Loader` 三种依赖类型：**
+
+| 用法 | 含义 |
+|------|------|
+| `Loader("author")` | 按关系名查 ErManager 注册的 DataLoader |
+| `Loader(UserLoader)` | 传入 DataLoader 子类，实例化并缓存 |
+| `Loader(load_users)` | 传入 async callable，包装为 DataLoader |
+
+**按名匹配规则：**
+1. 若 DTO 是 `DefineSubset`，**优先**在源实体的关系中查找同名 DataLoader
+2. 否则在 ErManager 全局查找
+3. 多个实体有同名关系：发出警告，返回第一个匹配——建议用 `Loader(UserLoader)` 显式指定
+
+### 5.5 隐式 auto-load（不必写 `resolve_*`）
+
+当 DTO 字段**同时满足**以下条件，Resolver 自动加载关系，无需 `resolve_*`：
+
+1. 字段没有对应的 `resolve_*` 方法
+2. 字段不在 `__subset__` 定义中（是额外字段）
+3. 字段名匹配 ErManager 中已注册的关系（ORM 关系或 `__relationships__` 自定义关系）
+4. 字段类型与关系 target **兼容**（定义见下）
+
+```python
+class TaskSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=Task, fields=["id", "title", "owner_id"])
+    owner: UserSummary | None = None   # 自动匹配 Task.owner 关系，无需 resolve_*
+```
+
+**"兼容"的精确定义：**
+- DTO 字段类型是 BaseModel DTO：检查 `is_compatible_type(dto_cls, target_entity)`——即 DTO 的 `__subset__.kls` 与关系 target 实体相同或为其父类
+- DTO 字段类型是 **scalar primitive**（如 `list[int]`、`str`）：仅当关系是 `__relationships__` 中 `target=list[primitive]` / `target=primitive` 形式的 CUSTOM 关系时匹配（2.10.1+）。ORM 关系 target 是 SQLModel 实体，scalar 字段不会误匹配
+
+匹配失败时 Resolver 静默跳过该字段（保持默认值）——这是常见的"为什么我的字段没被填充"的根因。**调试方法**：手写一个 `resolve_*`，看是否能拿到 loader。
+
+**显式 auto-load 标记 `AutoLoad(origin=...)`：** 当字段名与关系名不一致、或想强制开启 auto-load，用注解形式标记：
+
+```python
+from typing import Annotated
+from nexusx import AutoLoad
+
+class TaskSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=Task, fields=["id", "title", "owner_id"])
+    # 字段名 creator 与关系名 owner 不一致，用 AutoLoad 指定
+    creator: Annotated[UserSummary | None, AutoLoad(origin="owner")] = None
+```
+
+`origin` 省略时默认用字段名作为关系名查找。
+
+### 5.6 `post_*` 与 `post_default_handler`
+
+`post_*` 在子树完全解析后执行，可安全读取同对象上 `resolve_*` 已经填充的字段。
+
+```python
+class PostSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=Post, fields=["id", "title", "author_id"])
+    author: UserSummary | None = None
+    word_count: int = 0
+
+    def resolve_author(self, loader=Loader("author")):
+        return loader.load(self.author_id)
+
+    def post_word_count(self):                  # ← 名称绑定到字段 word_count
+        return len(self.title.split())
+```
+
+**`post_default_handler`（2.10.0+）**：保留方法名，在该节点**所有** `post_*` 完成后运行，用于跨字段聚合。
+
+```python
+class SprintDetail(DefineSubset):
+    __subset__ = SubsetConfig(kls=Sprint, fields=["id", "name"])
+    total_count: int = 0
+    done_count: int = 0
+    completion_rate: float = 0.0
+
+    def post_total_count(self): ...      # 填充 total_count
+    def post_done_count(self): ...       # 填充 done_count
+
+    def post_default_handler(self):      # ← 收尾钩子，跑在所有 post_* 之后
+        if self.total_count:
+            self.completion_rate = self.done_count / self.total_count
+        # 返回值被忽略；用 self.xxx = ... 写字段
+```
+
+**冲突检测（3.1.1+）**：同时定义 `post_default_handler` 方法**和** `default_handler` 字段时，`Resolver` 构造期抛 `ValueError`——因为 `post_<field>` 命名约定会让用户以为 `post_default_handler` 填充 `default_handler` 字段。三种修复：rename 方法 / 删字段 / 手动赋值。
+
+### 5.7 跨层数据流：`ExposeAs` / `SendTo` / `Collector`
+
+实现父→子和子→父的跨层数据传递。
+
+#### `ExposeAs`：祖先向下传递上下文
+
+```python
+from typing import Annotated
+from nexusx import ExposeAs
+
+class SprintDetail(DefineSubset):
+    __subset__ = SubsetConfig(
+        kls=Sprint, fields=["id", "name"],
+        expose_as=[("name", "sprint_name")],   # 声明式 ExposeAs
+    )
+    tasks: list["TaskDetail"] = []
+
+class TaskDetail(DefineSubset):
+    __subset__ = SubsetConfig(kls=Task, fields=["id", "title"])
+
+    def post_full_title(self, ancestor_context):
+        # ancestor_context: dict，含所有祖先 ExposeAs 的 alias → value
+        sprint_name = ancestor_context.get("sprint_name", "")
+        return f"{sprint_name} / {self.title}"
+```
+
+注解形式：`name: Annotated[str, ExposeAs("sprint_name")]`。
+
+#### `SendTo` + `Collector`：后代向上聚合
+
+```python
+from nexusx import SendTo, Collector
+
+class SprintDetail(DefineSubset):
+    __subset__ = SubsetConfig(kls=Sprint, fields=["id", "name"])
+    tasks: list["TaskDetail"] = []
+    contributors: list[UserSummary] = []
+
+    # Collector 接收所有后代 SendTo 到 'contributors' 的值
+    def post_contributors(self, collector=Collector("contributors")):
+        return collector.values()
+
+class TaskDetail(DefineSubset):
+    __subset__ = SubsetConfig(
+        kls=Task, fields=["id", "title", "owner_id"],
+        send_to=[("owner", "contributors")],     # 声明式 SendTo
+    )
+    owner: UserSummary | None = None
+```
+
+**`Collector` 参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `alias` | `str` | 收集器名，匹配 SendTo 的目标 |
+| `flat` | `bool` | True 时展开列表值（用于列表字段的 SendTo） |
+
+注解形式：`owner: Annotated[UserSummary | None, SendTo("contributors")] = None`。
+
+### 5.8 `build_dto_select`：DB → DTO 的主路径
+
+**这是 Core API 模式从数据库取数据的首选方式**——只 SELECT DTO `__subset__` 中声明的列，避免 `SELECT *`。
+
+```python
+from nexusx import build_dto_select
+from sqlmodel import select
+
+# 查全部
+stmt = build_dto_select(TaskSummary)
+async with async_session() as session:
+    rows = (await session.exec(stmt)).all()
+dtos = [TaskSummary(**dict(row._mapping)) for row in rows]
+result = await Resolver().resolve(dtos)
+
+# 带 where
+stmt = build_dto_select(SprintDetail, where=Sprint.id == sprint_id)
+async with async_session() as session:
+    rows = (await session.exec(stmt)).all()
+if not rows:
+    return None
+dto = SprintDetail(**dict(rows[0]._mapping))
+return await Resolver().resolve(dto)
+```
+
+**标准模式**：`build_dto_select(DTO, where=...)` → `session.exec` → `dict(row._mapping)` → `DTO(**...)` → `Resolver().resolve(...)`。
+
+> 也可以用 `DTO.model_validate(orm_instance)` 直接从 ORM 实例构造——但会 SELECT 整行。
+
+### 5.9 `Resolver(loader_instances=...)`（3.1.0+）
+
+调用方传入预创建（通常已 prime）的 DataLoader 实例，按 class 匹配，跳过已知 key 的冗余 batch 调用。
+
+```python
+from aiodataloader import DataLoader
+
+class UserLoader(DataLoader):
+    async def batch_load_fn(self, keys):
+        return [await fetch_user(k) for k in keys]
+
+# 已知当前用户，跳过 DB 往返
+loader = UserLoader()
+loader.prime(current_user.id, current_user_dto)
+
+resolver = Resolver(
+    context={"user_id": current_user.id},
+    loader_instances={UserLoader: loader},
+)
+result = await resolver.resolve(dtos)
+```
+
+**关键语义：**
+- 仅影响 `Loader(Cls)` 显式声明路径。**auto-load 路径不走 `loader_instances`**（auto-load 按 ErManager 关系名查找，不查 class-keyed 字典）
+- key 必须是 `aiodataloader.DataLoader` 子类，value 必须是 key 的实例。不合规在**构造期**抛 `TypeError`
+- 实例按引用使用（不复制），`resolve()` **不清理**它们——caller 拥有生命周期。需要 per-request 隔离时每次构造新实例
+- `er.create_resolver()` 返回的 `BoundResolver.__init__(context, loader_instances)` 自动透传到底层 `Resolver`
+
+### 5.10 自定义 `Relationship`（非 ORM 关系）
+
+用于没有 SQLAlchemy Relationship 的关联，通过手写 async 批量加载器实现。
+
+```python
+from nexusx import Relationship
+
+async def tags_by_post_loader(post_ids: list[int]) -> list[list[Tag]]:
+    """签名：list[KEY] → list[list[TARGET]]（一对多）"""
+    ...
+
+class Post(BaseEntity, table=True):
+    __relationships__ = [
+        Relationship(
+            fk="id",                       # 源实体字段名，作为 batch key
+            target=list[Tag],              # 目标类型，list 表示一对多
+            name="tags",                   # 关系名（同一实体唯一）
+            loader=tags_by_post_loader,    # async 批量加载函数
+            description="Post tags",       # 可选
+        )
+    ]
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+```
+
+**`Relationship` 参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `fk` | `str` | 源实体字段名，值作为 batch key |
+| `target` | `type \| list[type]` | 目标。`list[Tag]` = 一对多；`Tag` = 多对一 |
+| `name` | `str` | 关系名，在同一实体内唯一 |
+| `loader` | `Callable` | async 批量加载函数 |
+| `description` | `str \| None` | 可选描述（ER 图用） |
+
+**Loader 签名：**
+- 标量 target（多对一）：`async def fn(keys: list[K]) -> list[V | None]`
+- 列表 target（一对多）：`async def fn(keys: list[K]) -> list[list[V]]`
+
+DTO 中匹配自定义关系同 ORM 关系一样：字段名 == 关系名、类型兼容即可隐式 auto-load。
+
+### 5.11 完整可运行例子：Core API 模式
+
+```python
+# app_core.py
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlmodel import Field, Relationship, SQLModel, select
+from nexusx import DefineSubset, SubsetConfig, ErManager, build_dto_select
+
+engine = create_async_engine("sqlite+aiosqlite:///./app.db")
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+
+class Task(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    owner_id: int | None = Field(default=None, foreign_key="user.id")
+    owner: User | None = Relationship()
+
+class UserSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=User, fields=["id", "name"])
+
+class TaskSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=Task, fields=["id", "title", "owner_id"])
+    owner: UserSummary | None = None   # 隐式 auto-load Task.owner
+
+# 启动期对象
+er = ErManager(base=SQLModel, session_factory=async_session)
+Resolver = er.create_resolver()
+
+app = FastAPI()
+
+@app.on_event("startup")
+async def _startup():
+    async with engine.begin() as c:
+        await c.run_sync(SQLModel.metadata.create_all)
+
+@app.get("/tasks")
+async def get_tasks():
+    stmt = build_dto_select(TaskSummary)
+    async with async_session() as session:
+        rows = (await session.exec(stmt)).all()
+    dtos = [TaskSummary(**dict(r._mapping)) for r in rows]
+    return await Resolver().resolve(dtos)
+```
+
+---
+
+## 6. 模式 C：UseCase（业务服务层）
+
+### 6.1 何时用（与 A/B 对比）
+
+- 你有**业务逻辑层**，不想直接暴露 SQLModel 实体
+- 想让一份业务代码同时给 AI（MCP）、HTTP（REST/JSON-RPC）、CLI 用
+- service 方法内部用 §5 Core API 组装 DTO 响应
+
+**与 §4 GraphQL 的区别：** UseCase 不暴露实体，而是暴露 service 方法；service 方法签名决定 API 形状。
+**与 §5 Core API 的关系：** UseCase 是 Core API 的上层封装——service 内部调 `Resolver().resolve(dto)`，外部多套一层入口。
+
+### 6.2 `UseCaseService` + `@query` + `@mutation`
+
+```python
+from nexusx import UseCaseService, query, mutation
+
+class SprintService(UseCaseService):
+    """Sprint management service."""
+
+    @query
+    async def list_sprints(cls, limit: int = 50) -> list[SprintSummary]:
+        """Get all sprints."""
+        async with async_session() as session:
+            rows = (await session.exec(select(Sprint).limit(limit))).all()
+        dtos = [SprintSummary(**dict(r._mapping)) for r in rows]
+        return await Resolver().resolve(dtos)
+
+    @mutation
+    async def create_sprint(cls, name: str) -> SprintSummary:
+        """Create a new sprint."""
+        ...
+```
+
+**规则：**
+- `UseCaseService` 用 `BusinessMeta` 元类，自动发现 `@query`/`@mutation` 装饰的 async classmethod
+- `get_tag_name()` 返回服务标签名（默认类名，可重写），用于 FastAPI OpenAPI 分组
+- 默认 tag 名：类名去掉 `Service`/`Rpc` 后缀转 snake_case（`SprintService` → `sprint`）
+
+### 6.3 `FromContext`：跨入口的上下文注入
+
+`FromContext` 标记的参数从请求上下文（如 HTTP header 中的 user_id）注入，**不**出现在客户端调用参数中。这让同一个 service 方法在 FastAPI（直接传参）和 MCP（从 header 提取）下都能工作。
+
+```python
+from typing import Annotated
+from nexusx import UseCaseService, FromContext, query
+
+class ProjectService(UseCaseService):
+    @query
+    async def get_project(
+        cls,
+        user_id: Annotated[int, FromContext()],   # 从 context_extractor 注入
+        project_id: int,                          # 客户端传
+    ) -> ProjectDetail:
+        ...
+```
+
+`context_extractor` 定义在 `UseCaseAppConfig` 上（见 6.4），是 sync 或 async callable，接收请求对象、返回 dict。
+
+### 6.4 `UseCaseAppConfig`
+
+```python
+from nexusx import UseCaseAppConfig
+
+config = UseCaseAppConfig(
+    name="project",                                   # 必填：应用名
+    services=[UserService, TaskService],              # 必填：UseCaseService 子类列表
+    description="Project management API",             # 可选
+    enable_mutation=True,                             # 默认 True；False 时 mutation 不暴露
+    context_extractor=extract_user_from_request,      # 可选：从请求抽上下文给 FromContext
+)
+```
+
+### 6.5 ComposeSchema：UseCase 自动生成 GraphQL schema
+
+```python
+from nexusx import build_compose_schema
+
+schema = build_compose_schema(config)   # 启动期一次；schema 错误在此抛
+```
+
+**生成的 schema 结构（固定三层）：**
+
+```graphql
+type Query {
+  SprintService: SprintServiceQuery!
+  UserService: UserServiceQuery!
+}
+type SprintServiceQuery {
+  list_sprints(limit: Int = 50): [SprintSummary!]!
+  create_sprint(name: String!): SprintSummary!   # 仅当 enable_mutation=True
+}
+```
+
+**`ComposeSchema` 三个视图：**
+
+| 方法 | 返回 | 用途 |
+|------|------|------|
+| `render_sdl()` | `str` | 完整 SDL 字符串 |
+| `render_introspection()` | `dict` | graphql `__schema` 内省 payload（GraphiQL 兼容，可过 graphql-core `build_client_schema`） |
+| `render_method_sdl(service, method)` | `str \| None` | 单方法 SDL 片段（含返回类型闭包）；找不到返回 None |
+
+**`ComposeSchemaError` 体系（启动期抛）：**
+
+| 错误类 | 触发条件 |
+|--------|---------|
+| `DuplicateServiceError` | 同 app 内同名 service |
+| `DuplicateMethodError` | 同 service 内同名方法 |
+| `DuplicateTypeError` | 不同类共享同一 GraphQL 类型名 |
+| `UnsupportedTypeError` | 不支持的 Python 类型 |
+| `SQLModelInDtoFieldError` | DTO 字段引用了 SQLModel 实体（必须用 DTO） |
+| `MissingReturnAnnotationError` | 方法缺返回类型注解 |
+
+**`compose_introspect(schema, query)`：** 处理 GraphiQL 风格的内省查询（`__schema` / `__type` / `__typename`），返回 `{"data": ..., "errors": None}` 信封。与 MCP Layer 3（拒绝内省）成对：MCP 走渐进披露，HTTP GraphiQL 走完整内省。
+
+**`SelectionError`：** UseCase MCP 调用时 `selection=` 参数（GraphQL 风格字段投影字符串）无效时抛出，是 `ValueError` 的子类。
+
+### 6.6 `create_use_case_graphql_mcp_server`：4 层渐进披露 MCP
+
+```python
+from nexusx import create_use_case_graphql_mcp_server
+
+mcp = create_use_case_graphql_mcp_server(
+    apps=[config],
+    name="Project API",
+)
+mcp.run()                              # stdio
+# mcp.run(transport="streamable-http") # HTTP
+```
+
+**4 层工具：**
+
+| Layer | 工具 | 响应信封 | 用途 |
+|-------|------|---------|------|
+| 0 | `list_apps()` | `{success, data}` | 发现可用 app |
+| 1 | `describe_compose_schema(app_name)` | `{success, data}` | 取整个 schema 概览 |
+| 2 | `describe_compose_method(app_name, service, method)` | `{success, data}` | 单方法签名 + 参数 schema |
+| 3 | `compose_query(app_name, query)` | `{data, errors}` | 执行 GraphQL 字符串（**拒绝内省**） |
+
+Layer 3 收标准 GraphQL 字符串；遇到 `__schema`/`__type`/`__typename` 返回 `{data: null, errors: [...]}`，引导 AI 用 Layer 1/2 探索。
+
+**HTTP 部署（带 CORS）：**
+
+```python
+mcp_app = mcp.http_app(transport="streamable-http", stateless_http=True)
+from fastapi.middleware.cors import CORSMiddleware
+mcp_app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                       allow_methods=["*"], allow_headers=["*"])
+import uvicorn; uvicorn.run(mcp_app, host="0.0.0.0", port=8006)
+```
+
+`stateless_http=True` 让一次性客户端（如 list-tools 探测）无需管理 `mcp-session-id` 即可调用。
+
+### 6.7 `create_use_case_router`：FastAPI REST 自动路由
+
+```python
+from nexusx import create_use_case_router
+
+router = create_use_case_router(
+    config,
+    prefix="/api",                    # 默认 /api
+    # url_mapper=lambda svc: ...,     # 自定义每 service 的 URL 段
+    dependencies=[...],               # router 级依赖（如鉴权）
+    route_options={                   # 每路由 override
+        "UserService.create_user": {"status_code": 201},
+    },
+    # **router_kwargs 转发给 APIRouter()
+)
+app.include_router(router)
+```
+
+每个 `@query`/`@mutation` 方法生成一个 POST 路由：`{prefix}/{service_url}/{method_name}`。`service_url` 默认是 service 类名 snake_case。
+
+### 6.8 `create_jsonrpc_router`：JSON-RPC 2.0
+
+```python
+from nexusx import create_jsonrpc_router
+
+router = create_jsonrpc_router(
+    config,
+    path="/rpc",                      # 默认 /rpc
+    # context_extractor=...,          # 覆盖 config.context_extractor
+)
+app.include_router(router)
+```
+
+生成单一 POST endpoint，方法命名 `ServiceName.method_name`，支持批量请求（JSON 数组）。
+
+### 6.9 `create_use_case_cli`：Typer CLI
+
+```python
+from nexusx import create_use_case_cli
+
+cli = create_use_case_cli(config, app_name="project")
+# cli 是 typer.Typer 实例；每个 service 是子命令组，每个方法是命令
+if __name__ == "__main__":
+    cli()
+```
+
+需要 `pip install nexusx[cli]`（typer）。3.0.1 起 typer 是 lazy import，不装 extra 也不影响 `import nexusx`。
+
+### 6.10 `create_use_case_voyager`：交互式可视化
+
+```python
+from nexusx import create_use_case_voyager
+
+voyager = create_use_case_voyager(
+    services=[UserService, TaskService],
+    er_manager=er,                                    # 可选：展示 ER 图
+    name="My Project API",
+    module_color={"user": "#f00", "task": "#0f0"},    # 可选
+    initial_page_policy="first",                      # "first" | "full" | "empty"
+    online_repo_url="https://github.com/...",         # 可选：源码链接
+    version="3.1.1",                                  # 缓存 key
+)
+app.mount("/voyager", voyager)
+```
+
+功能：service 结构图（DOT）、ER 图、服务搜索、源码链接、DefineSubset → 源实体连线。
+
+### 6.11 完整可运行例子：UseCase 模式
+
+```python
+# app_usecase.py
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlmodel import Field, SQLModel, select
+from nexusx import (
+    UseCaseService, UseCaseAppConfig, query,
+    DefineSubset, SubsetConfig, ErManager, build_dto_select,
+    create_use_case_graphql_mcp_server, create_use_case_router,
+)
+
+engine = create_async_engine("sqlite+aiosqlite:///./app.db")
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+
+class UserSummary(DefineSubset):
+    __subset__ = SubsetConfig(kls=User, fields=["id", "name"])
+
+er = ErManager(base=SQLModel, session_factory=async_session)
+Resolver = er.create_resolver()
+
+class UserService(UseCaseService):
+    """User management."""
+
+    @query
+    async def list_users(cls) -> list[UserSummary]:
+        async with async_session() as session:
+            rows = (await session.exec(select(User))).all()
+        dtos = [UserSummary(**dict(r._mapping)) for r in rows]
+        return await Resolver().resolve(dtos)
+
+config = UseCaseAppConfig(name="demo", services=[UserService])
+
+app = FastAPI()
+app.include_router(create_use_case_router(config))
+
+@app.on_event("startup")
+async def _startup():
+    async with engine.begin() as c:
+        await c.run_sync(SQLModel.metadata.create_all)
+
+# MCP 入口（单独进程）：mcp = create_use_case_graphql_mcp_server([config]); mcp.run()
+```
+
+REST 测试：`POST http://localhost:8000/api/user/list_users` `{}`。
+MCP 测试：另写 `mcp_run.py`，按 6.6 跑。
+
+---
+
+## 7. GraphQL over MCP（暴露已有 GraphQL API）
+
+如果你想跳过 UseCase、直接把 §4 的 GraphQL API 暴露给 AI 用，用本节。
+
+### 7.1 单应用：`create_simple_mcp_server`
+
+```python
+from nexusx.mcp import create_simple_mcp_server
+
+mcp = create_simple_mcp_server(
     base=BaseEntity,
     name="My API",
     desc="API description",
-    allow_mutation=False,  # 只读模式
+    allow_mutation=False,            # 只读模式
+    session_factory=async_session,   # 关系加载需要
 )
-mcp.run()                    # stdio 模式
-# mcp.run(transport="streamable-http")  # HTTP 模式
+mcp.run()
 ```
 
-提供 3 个工具：`get_schema()`、`graphql_query()`、`graphql_mutation()`
+提供 2-3 个工具：`get_schema()`、`graphql_query(query)`、`graphql_mutation(mutation)`（仅 `allow_mutation=True`）。
 
-**HTTP 部署模式：**
-
-```python
-# 方式一：直接 run（简单场景）
-mcp.run(transport="streamable-http")
-
-# 方式二：http_app + uvicorn（推荐，支持 CORS、stateless 等）
-mcp_app = mcp.http_app(transport="streamable-http", stateless_http=True)
-mcp_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-)
-uvicorn.run(mcp_app, host="0.0.0.0", port=8006)
-```
-
-`stateless_http=True` 允许一次性客户端（如 list-tools 探测）无需管理 `mcp-session-id` 即可调用端点。
-
-#### 多应用 MCP Server
+### 7.2 多应用：`create_mcp_server`
 
 ```python
 from nexusx.mcp import create_mcp_server, AppConfig
@@ -244,385 +1064,11 @@ mcp = create_mcp_server(
 mcp.run()
 ```
 
-提供 8 个工具：`list_apps`、`list_queries`、`list_mutations`、`get_query_schema`、`get_mutation_schema`、`graphql_query`、`graphql_mutation`
+提供 8 个工具（read-only 模式 5 个）：`list_apps`、`list_queries`、`list_mutations`、`get_query_schema`、`get_mutation_schema`、`graphql_query`、`graphql_mutation`。除 `list_apps` 外所有工具需要 `app_name` 参数。
 
-### 3.6 `DefineSubset`
+---
 
-从 SQLModel 实体生成独立的 Pydantic DTO 模型。选择特定字段，自动隐藏 FK 列，并支持声明关系字段。
-
-```python
-from nexusx import DefineSubset
-
-# 基本用法：选择字段
-class UserSummary(DefineSubset):
-    __subset__ = (User, ('id', 'name'))
-
-# 带关系字段：owner 自动从 Task.owner 关系加载
-class TaskSummary(DefineSubset):
-    __subset__ = (Task, ('id', 'title', 'owner_id'))
-    owner: UserSummary | None = None
-```
-
-**FK 字段处理：**
-- FK 字段（如 `owner_id`）自动设置 `exclude=True`，序列化时隐藏
-- 内部仍可通过 `self.owner_id` 在 `resolve_*` 方法中访问
-
-**关系字段声明规则：**
-- 关系字段声明在类体中（不在 `__subset__` 内）
-- 类型**必须**使用 DTO 类型（DefineSubset 子类），不能直接用 SQLModel 实体
-
-```python
-# 错误 — 不能直接使用 SQLModel 实体
-class TaskSummary(DefineSubset):
-    __subset__ = (Task, ('id', 'title'))
-    owner: User | None = None          # TypeError!
-
-# 正确 — 使用 DTO 类型
-class TaskSummary(DefineSubset):
-    __subset__ = (Task, ('id', 'title'))
-    owner: UserSummary | None = None   # OK
-```
-
-**`resolve_*` 和 `post_*` 方法：**
-
-```python
-class PostSummary(DefineSubset):
-    __subset__ = (Post, ('id', 'title', 'author_id'))
-    author: UserSummary | None = None
-    word_count: int = 0
-
-    # resolve_*: 加载外部数据
-    def resolve_author(self, loader=Loader('author')):
-        return loader.load(self.author_id)
-
-    # post_*: 在子树解析完成后计算派生字段
-    def post_word_count(self):
-        return len(self.title.split())
-```
-
-**Implicit Auto-Loading：** 当以下条件全部满足时，Resolver 自动加载关系字段（无需手写 `resolve_*`）：
-
-1. 字段没有对应的 `resolve_*` 方法
-2. 字段是额外字段（不在 `__subset__` 定义中）
-3. 字段名匹配已注册的 ORM/自定义关系
-4. 字段类型是 BaseModel DTO 且与关系目标实体兼容
-
-```python
-# 无需 resolve_author — Resolver 自动加载
-class TaskSummary(DefineSubset):
-    __subset__ = (Task, ('id', 'title', 'owner_id'))
-    owner: UserSummary | None = None  # 自动匹配 Task.owner 关系
-```
-
-### 3.7 `SubsetConfig`
-
-`DefineSubset` 的声明式配置，替代 `__subset__` 元组语法。支持更丰富的字段控制。
-
-```python
-from nexusx import DefineSubset, SubsetConfig
-
-class UserSummary(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=User,                          # 源 SQLModel 实体
-        fields=['id', 'name'],             # 包含的字段（与 omit_fields 互斥）
-    )
-```
-
-**参数说明：**
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `kls` | `type` | 源 SQLModel 实体类 |
-| `fields` | `list[str] | "all"` | 包含的字段名列表。`"all"` 包含所有字段 |
-| `omit_fields` | `list[str]` | 排除的字段名列表。与 `fields` 互斥 |
-| `excluded_fields` | `list[str]` | 存在于 DTO 但隐藏于序列化输出（`exclude=True`） |
-| `expose_as` | `list[tuple[str, str]]` | `(field_name, alias)` 对，等价于 `ExposeAs` 注解 |
-| `send_to` | `list[tuple[str, str]]` | `(field_name, collector_name)` 对，等价于 `SendTo` 注解 |
-
-**`expose_as` 用法（声明式 ExposeAs）：**
-
-```python
-class SprintDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Sprint,
-        fields=['id', 'name'],
-        expose_as=[('name', 'sprint_name')],  # name 暴露为 sprint_name
-    )
-    tasks: list[TaskDetail] = []
-```
-
-**`send_to` 用法（声明式 SendTo）：**
-
-```python
-class TaskDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Task,
-        fields=['id', 'title', 'owner_id'],
-        send_to=[('owner', 'contributors')],  # owner 发送到 contributors 收集器
-    )
-    owner: UserSummary | None = None
-```
-
-**`omit_fields` 用法：**
-
-```python
-class UserPublic(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=User,
-        omit_fields=['password', 'secret_key'],  # 排除敏感字段
-    )
-```
-
-### 3.8 `ErManager`
-
-实体关系管理器。检查 SQLModel ORM 元数据，自动发现关系，创建 DataLoader，生成 Resolver。
-
-```python
-from nexusx import ErManager
-
-# 方式一：通过基类自动发现实体
-er = ErManager(base=SQLModel, session_factory=async_session)
-
-# 方式二：显式指定实体列表
-er = ErManager(entities=[User, Post, Comment], session_factory=async_session)
-```
-
-**参数说明：**
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `base` | `type | None` | 二选一 | SQLModel 基类，自动发现子类 |
-| `entities` | `list[type] | None` | 二选一 | 显式实体列表 |
-| `session_factory` | `Callable` | 是 | 异步 session 工厂 |
-| `enable_pagination` | `bool` | 否 | 启用列表关系分页，默认 False |
-| `split_loader_by_type` | `bool` | 否 | 按 DTO 类型拆分 Loader 实例，默认 False |
-
-**注意：** `base` 和 `entities` 互斥，不能同时提供。
-
-**核心方法：**
-
-```python
-# 创建 Resolver 类（应用启动时调用一次）
-Resolver = er.create_resolver()
-
-# 每次 request 创建 Resolver 实例
-resolver = Resolver(context={"user_id": 1})
-result = await resolver.resolve(dtos)
-
-# 查询关系信息
-er.get_relationships(entity=User)           # → dict[str, RelationshipInfo]
-er.get_all_entities()                        # → list[type[SQLModel]]
-er.get_relationship(entity=User, name='posts')  # → RelationshipInfo | None
-```
-
-**自动关系发现：**
-- 通过 SQLAlchemy inspect 发现 ORM 关系（MANYTOONE、ONETOMANY、MANYTOMANY）
-- 通过 `__relationships__` 发现自定义关系
-- 为每个关系自动创建 DataLoader 类
-
-### 3.9 Resolver 执行引擎
-
-由 `ErManager.create_resolver()` 创建，遍历 Pydantic 模型树，执行 `resolve_*` 加载数据，`post_*` 计算派生字段。
-
-**执行顺序：**
-
-```
-1. resolve_* 方法 + implicit auto-load  →  加载外部数据
-2. traverse 已有对象字段                   →  递归处理子节点
-3. post_* 方法                            →  计算派生字段（子树已就绪）
-4. collect SendTo 值                      →  聚合后代数据到祖先 Collector
-```
-
-**关键特性：**
-- 每层 `resolve_*` 并发执行（`asyncio.gather`）
-- DataLoader 批量化同层相同 loader 的请求（避免 N+1）
-- `post_*` 在子树完全解析后才执行，可安全读取已加载的字段
-- 支持 `context`、`parent`、`ancestor_context` 参数注入
-
-**返回值：** `resolve()` 返回处理后的 DTO 对象（单个对象或列表）。传入 list 则返回 list，传入单个对象则返回单个对象。FastAPI endpoint 中可直接 return，Pydantic 会自动序列化。
-
-```python
-# 完整使用示例
-from nexusx import DefineSubset, ErManager
-
-er = ErManager(base=SQLModel, session_factory=async_session)
-Resolver = er.create_resolver()
-
-# 在 request handler 中
-resolver = Resolver(context={"current_user_id": user_id})
-result = await resolver.resolve([
-    SprintSummary.model_validate(s) for s in sprints
-])
-```
-
-### 3.10 `Loader`
-
-在 `resolve_*` 方法参数中声明 DataLoader 依赖。
-
-```python
-from nexusx import Loader
-
-class PostSummary(DefineSubset):
-    __subset__ = (Post, ('id', 'title', 'author_id'))
-    author: UserSummary | None = None
-
-    # 按名称查找 ErManager 中注册的关系
-    def resolve_author(self, loader=Loader('author')):
-        return loader.load(self.author_id)
-```
-
-**`Loader` 支持三种依赖类型：**
-
-| 类型 | 用法 | 说明 |
-|------|------|------|
-| `str` | `Loader('author')` | 按 ErManager 关系名查找 |
-| `DataLoader` 子类 | `Loader(UserLoader)` | 实例化并缓存 |
-| `async callable` | `Loader(load_users)` | 包装为 DataLoader |
-
-**匹配规则：**
-- `Loader('author')` 查找 ErManager 中注册的关系名为 `author` 的 DataLoader
-- 当 DefineSubset DTO 使用时，优先在源实体的关系中查找
-- 若多个实体有同名关系，发出警告并返回第一个匹配
-
-### 3.11 跨层数据流：ExposeAs / SendTo / Collector
-
-实现父→子和子→父的跨层数据传递。
-
-#### ExposeAs — 祖先向下传递上下文
-
-将字段值暴露给后代节点，通过 `ancestor_context` 参数访问。
-
-```python
-from typing import Annotated
-from nexusx import ExposeAs
-
-class SprintDetail(DefineSubset):
-    __subset__ = (Sprint, ('id', 'name'))
-    name: Annotated[str, ExposeAs('sprint_name')]  # 暴露给后代
-    tasks: list[TaskDetail] = []
-
-class TaskDetail(DefineSubset):
-    __subset__ = (Task, ('id', 'title'))
-
-    def post_full_title(self, ancestor_context):
-        # ancestor_context 包含祖先 ExposeAs 的值
-        sprint_name = ancestor_context.get('sprint_name', '')
-        return f"{sprint_name} / {self.title}"
-```
-
-#### SendTo + Collector — 后代向上聚合值
-
-`SendTo` 标记字段值发送到祖先的 `Collector`，`Collector` 在 `post_*` 中接收聚合结果。
-
-```python
-from typing import Annotated
-from nexusx import SendTo, Collector
-
-class SprintDetail(DefineSubset):
-    __subset__ = (Sprint, ('id', 'name'))
-    tasks: list[TaskDetail] = []
-    contributors: list[UserSummary] = []
-
-    # Collector 接收所有后代 SendTo 的值
-    def post_contributors(self, collector=Collector('contributors')):
-        return collector.values()
-
-class TaskDetail(DefineSubset):
-    __subset__ = (Task, ('id', 'title', 'owner_id'))
-    # owner 值发送到名为 'contributors' 的 Collector
-    owner: Annotated[UserSummary | None, SendTo('contributors')] = None
-```
-
-**Collector 参数：**
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `alias` | `str` | 收集器名称，匹配 SendTo 的目标 |
-| `flat` | `bool` | 为 True 时展开列表值（用于列表字段的 SendTo） |
-
-**完整跨层协作示例：**
-
-```python
-class SprintDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Sprint,
-        fields=['id', 'name'],
-        expose_as=[('name', 'sprint_name')],  # 声明式 ExposeAs
-    )
-    tasks: list[TaskDetail] = []
-    contributors: list[UserSummary] = []
-
-    def post_contributors(self, collector=Collector('contributors')):
-        return collector.values()
-
-class TaskDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Task,
-        fields=['id', 'title', 'owner_id'],
-        send_to=[('owner', 'contributors')],  # 声明式 SendTo
-    )
-    owner: UserSummary | None = None
-    full_title: str = ""
-
-    def post_full_title(self, ancestor_context):
-        sprint_name = ancestor_context.get('sprint_name', '')
-        return f"{sprint_name} / {self.title}"
-```
-
-### 3.12 `Relationship`
-
-定义自定义（非 ORM）关系。用于没有 SQLAlchemy Relationship 的关联，通过手写 async 批量加载器实现。
-
-```python
-from nexusx import Relationship
-
-async def tags_by_post_loader(post_ids: list[int]) -> list[list[Tag]]:
-    """加载 post 的标签。签名：list[KEY] → list[list[TARGET]]"""
-    ...
-
-class Post(SQLModel, table=True):
-    __relationships__ = [
-        Relationship(
-            fk='id',                      # 源实体上的字段名，作为 loader 的 key
-            target=list[Tag],             # 目标类型，list 表示一对多
-            name='tags',                  # 关系名（唯一）
-            loader=tags_by_post_loader,   # async 批量加载函数
-            description='Post tags',      # 可选描述（ER 图用）
-        )
-    ]
-    id: int | None = Field(default=None, primary_key=True)
-    title: str
-```
-
-**参数说明：**
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `fk` | `str` | 源实体字段名，其值传给 loader 作为 batch key |
-| `target` | `type` 或 `list[type]` | 目标实体。`list[Tag]` 表示一对多 |
-| `name` | `str` | 关系名，在同一实体内唯一 |
-| `loader` | `Callable` | async 批量加载函数 |
-| `description` | `str | None` | 可选描述 |
-
-**Loader 签名：**
-- 标量目标（多对一）：`async def fn(keys: list[K]) -> list[V | None]`
-- 列表目标（一对多）：`async def fn(keys: list[K]) -> list[list[V]]`
-
-**DefineSubset 中使用自定义关系：**
-
-```python
-class TagDTO(DefineSubset):
-    __subset__ = (Tag, ('id', 'name'))
-
-class TaskWithTags(DefineSubset):
-    __subset__ = (Task, ('id', 'title'))
-    tags: list[TagDTO] = []   # 自动匹配 Task.__relationships__['tags']
-
-    def post_tag_count(self):
-        return len(self.tags)
-```
-
-### 3.13 `ErDiagram`
+## 8. ER 可视化：`ErDiagram`
 
 从 SQLModel 实体生成 Mermaid ER 图。
 
@@ -637,524 +1083,102 @@ print(diagram.to_mermaid())
 
 ```
 erDiagram
-    User {
-        id
-        name
-    }
-    Post {
-        id
-        title
-    }
+    User { id name }
+    Post { id title }
     User ||--o{ Post : posts
 ```
 
-**特性：**
-- 自动发现 ORM 关系和 `__relationships__` 自定义关系
-- 显示实体标量字段（排除关系字段）
-- 去重双向关系线
-
-### 3.14 `RpcService`
-
-业务服务基类。子类定义的 async classmethod 会被自动发现并暴露为 RPC 方法。
-
-```python
-from nexusx import RpcService
-
-class SprintService(RpcService):
-    """Sprint management service."""
-
-    @classmethod
-    async def list_sprints(cls) -> list[SprintSummary]:
-        """Get all sprints."""
-        async with get_session() as session:
-            return (await session.exec(select(Sprint))).all()
-
-    @classmethod
-    async def get_sprint(cls, sprint_id: int) -> SprintSummary | None:
-        """Get a sprint by ID."""
-        async with get_session() as session:
-            return await session.get(Sprint, sprint_id)
-```
-
-**规则：**
-- 只有 `async classmethod` 会被自动发现
-- `get_tag_name()` 方法被排除（保留用于自定义 tag 名）
-- 默认 tag 名：类名去掉 `Service`/`Rpc` 后缀，转 snake_case（`SprintService` → `sprint`）
-- 继承时自动合并基类方法
-
-**`get_tag_name()` 与 FastAPI 配合：**
-
-```python
-# get_tag_name() 返回 snake_case 的服务名，用于 FastAPI 路由的 OpenAPI 分组
-@app.get("/api/users", tags=[UserService.get_tag_name()])
-async def get_users():
-    return await UserService.list_users()
-
-@app.get("/api/tasks", tags=[TaskService.get_tag_name()])
-async def get_tasks():
-    return await TaskService.list_tasks()
-```
-
-这使同一个 RpcService 既能通过 MCP 暴露给 AI，也能通过 FastAPI 路由提供 HTTP API，业务逻辑只写一次。
-
-**RPC MCP Server：**
-
-```python
-from nexusx import create_rpc_mcp_server
-
-# services 参数接受 list[dict] 或 list[RpcServiceConfig]
-# 两种写法等价：
-
-# 写法一：dict 形式
-mcp = create_rpc_mcp_server(
-    services=[
-        {"name": "sprint", "service": SprintService,
-         "description": "Sprint management"},
-    ],
-    name="Project RPC API",
-)
-
-# 写法二：RpcServiceConfig TypedDict
-from nexusx.rpc import RpcServiceConfig
-
-mcp = create_rpc_mcp_server(
-    services=[
-        RpcServiceConfig(
-            name="sprint",
-            service=SprintService,
-            description="Sprint management",
-        ),
-    ],
-    name="Project RPC API",
-)
-mcp.run()
-```
-
-三层渐进式 AI 工具：
-1. `list_services()` → 发现可用服务
-2. `describe_service(service_name)` → 查看方法签名和参数 schema
-3. `call_rpc(service_name, method_name, params)` → 执行方法
-
-### 3.15 `create_rpc_voyager`
-
-创建交互式可视化 FastAPI 子应用，展示 RPC 服务结构和 ER 图。
-
-```python
-from nexusx import create_rpc_voyager
-
-voyager_app = create_rpc_voyager(
-    services=[
-        {"name": "user", "service": UserService},
-        {"name": "task", "service": TaskService},
-    ],
-    er_manager=er,                       # 可选：展示 ER 图
-    name="My Project API",
-    initial_page_policy="first",         # "first" | "full" | "empty"
-    online_repo_url="https://github.com/...",  # 可选：源码链接
-)
-
-app = FastAPI()
-app.mount("/voyager", voyager_app)
-```
-
-**参数说明：**
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `services` | `list[RpcServiceConfig]` | RPC 服务配置列表 |
-| `er_manager` | `ErManager | None` | 可选，用于 ER 图可视化 |
-| `name` | `str` | 界面显示名称 |
-| `module_color` | `dict[str, str] | None` | 模块颜色映射 |
-| `initial_page_policy` | `"first" / "full" / "empty"` | 初始页面策略 |
-| `online_repo_url` | `str | None` | 在线仓库 URL（源码链接） |
-| `version` | `str` | 版本号（用于缓存） |
-
-**Voyager 功能：**
-- RPC 服务结构图（DOT 格式）
-- ER 图（基于 ErManager）
-- 服务搜索和过滤
-- 源码查看（支持 VSCode 链接）
-- DefineSubset 源实体追踪（DTO → Entity 连线）
-- @query/@mutation 方法在 ER 图节点上显示
+特性：自动发现 ORM 关系和 `__relationships__`、显示实体标量字段、去重双向关系线。
 
 ---
 
-## 4. 类型映射
+## 9. 类型映射
 
-### Python → GraphQL
+### 9.1 Python → GraphQL
 
 | Python 类型 | GraphQL 类型 |
 |------------|-------------|
-| `int` | `Int!` |
-| `str` | `String!` |
-| `bool` | `Boolean!` |
-| `float` | `Float!` |
-| `Optional[int]` | `Int` |
+| `int` / `float` / `str` / `bool` | `Int!` / `Float!` / `String!` / `Boolean!` |
+| `Optional[int]` / `int \| None` | `Int` |
 | `list[int]` | `[Int!]!` |
 | `list[User]`（Entity） | `[User!]!` |
-| `Optional[User]` | `User` |
+| `Optional[User]` / `User \| None` | `User` |
 | `Enum` 子类 | `EnumName!` |
-| `SQLModel` 子类（参数中） | `InputName!` |
+| `SQLModel` 子类（在方法参数中） | `InputName!` |
 
-### 分页类型（enable_pagination=True 时）
-
-列表关系自动包装为 Result 类型：
+### 9.2 分页 Result 类型（`enable_pagination=True`）
 
 ```graphql
-type PostResult {
-  items: [Post!]!
-  pagination: Pagination!
-}
-
-type Pagination {
-  has_more: Boolean!
-  total_count: Int
-}
-```
-
-查询时传入 `limit` 和 `offset`：
-
-```graphql
-{
-  userGetAll {
-    posts(limit: 3, offset: 0) {
-      items { title }
-      pagination { has_more total_count }
-    }
-  }
-}
+type PostResult { items: [Post!]!, pagination: Pagination! }
+type Pagination { has_more: Boolean!, total_count: Int }
 ```
 
 ---
 
-## 5. 用法模式
+## 10. 约束、陷阱与版本特性
 
-### 模式 A：最小可运行 GraphQL API
-
-```python
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from sqlmodel import SQLModel, Field, select
-from nexusx import query, GraphQLHandler
-
-class BaseEntity(SQLModel): pass
-
-class User(BaseEntity, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    name: str
-
-    @query
-    async def get_all(cls) -> list['User']:
-        async with get_session() as session:
-            return (await session.exec(select(cls))).all()
-
-handler = GraphQLHandler(base=BaseEntity)
-
-class GraphQLRequest(BaseModel):
-    query: str
-
-app = FastAPI()
-
-@app.get("/graphql", response_class=HTMLResponse)
-async def graphiql():
-    return handler.get_graphiql_html()
-
-@app.post("/graphql")
-async def graphql(req: GraphQLRequest):
-    return await handler.execute(req.query)
-```
-
-### 模式 B：带关系的嵌套查询
-
-```python
-class User(BaseEntity, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    name: str
-    posts: list["Post"] = Relationship(
-        back_populates="author",
-        sa_relationship_kwargs={"order_by": "Post.id"},
-    )
-
-class Post(BaseEntity, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    title: str
-    author_id: int = Field(foreign_key="user.id")
-    author: Optional[User] = Relationship(back_populates="posts")
-```
-
-查询示例：
-
-```graphql
-{
-  userGetAll(limit: 5) {
-    id
-    name
-    posts(limit: 3) {
-      items {
-        title
-        author { name }
-      }
-      pagination { has_more total_count }
-    }
-  }
-}
-```
-
-关系通过 DataLoader 自动批量加载，无需手动 eager loading。
-
-### 模式 C：AutoQueryConfig 零手写查询
-
-```python
-from nexusx import GraphQLHandler, AutoQueryConfig
-
-handler = GraphQLHandler(
-    base=BaseEntity,
-    session_factory=async_session,
-    auto_query_config=AutoQueryConfig(
-        session_factory=async_session,
-        default_limit=20,
-    ),
-    enable_pagination=True,
-)
-
-# 自动为所有 BaseEntity 子类生成：
-# - entityById(id: PK!): Entity
-# - entityByFilter(filter: EntityFilterInput, limit: Int): [Entity!]!
-```
-
-### 模式 D：MCP 服务
-
-```python
-from nexusx.mcp import config_simple_mcp_server
-
-mcp = config_simple_mcp_server(
-    base=BaseEntity,
-    name="My App API",
-    desc="Application description",
-    allow_mutation=True,
-)
-mcp.run()
-```
-
-AI 助手使用流程：
-1. `get_schema()` → 获取完整 SDL
-2. `graphql_query(query="...")` → 执行查询
-3. `graphql_mutation(mutation="...")` → 执行变更
-
-### 模式 E：Core API DefineSubset DTO
-
-从实体构建 DTO，使用 ErManager + Resolver 自动加载关系。
-
-```python
-from fastapi import FastAPI
-from sqlmodel import SQLModel, Field, Relationship
-from nexusx import DefineSubset, SubsetConfig, ErManager
-
-# 实体定义
-class User(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    name: str
-
-class Task(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    title: str
-    owner_id: int | None = Field(default=None, foreign_key="user.id")
-    owner: User | None = Relationship()
-
-# DTO 定义
-class UserSummary(DefineSubset):
-    __subset__ = SubsetConfig(kls=User, fields=['id', 'name'])
-
-class TaskSummary(DefineSubset):
-    __subset__ = SubsetConfig(kls=Task, fields=['id', 'title'])
-    owner: UserSummary | None = None  # 自动匹配 Task.owner 关系
-
-# 应用启动时创建 ErManager 和 Resolver
-er = ErManager(base=SQLModel, session_factory=async_session)
-Resolver = er.create_resolver()
-
-# 在 endpoint 中使用
-app = FastAPI()
-
-@app.get("/tasks")
-async def get_tasks():
-    async with async_session() as session:
-        tasks = (await session.exec(select(Task))).all()
-    dtos = [TaskSummary.model_validate(t) for t in tasks]
-    resolver = Resolver()
-    return await resolver.resolve(dtos)
-```
-
-### 模式 F：Core API 跨层数据流
-
-使用 ExposeAs + SendTo + Collector 实现父子节点协作。
-
-```python
-from nexusx import DefineSubset, SubsetConfig, Collector, ErManager
-
-class UserSummary(DefineSubset):
-    __subset__ = SubsetConfig(kls=User, fields=['id', 'name'])
-
-class TaskDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Task,
-        fields=['id', 'title'],
-        send_to=[('owner', 'contributors')],
-    )
-    owner: UserSummary | None = None
-    full_title: str = ""
-
-    def post_full_title(self, ancestor_context):
-        sprint_name = ancestor_context.get('sprint_name', '')
-        return f"{sprint_name} / {self.title}"
-
-class SprintDetail(DefineSubset):
-    __subset__ = SubsetConfig(
-        kls=Sprint,
-        fields=['id', 'name'],
-        expose_as=[('name', 'sprint_name')],
-    )
-    tasks: list[TaskDetail] = []
-    contributors: list[UserSummary] = []
-
-    def post_contributors(self, collector=Collector('contributors')):
-        return collector.values()
-
-# 使用
-er = ErManager(base=SQLModel, session_factory=async_session)
-Resolver = er.create_resolver()
-
-resolver = Resolver()
-result = await resolver.resolve([
-    SprintDetail.model_validate(s) for s in sprints
-])
-# result 中每个 SprintDetail 包含:
-# - tasks: 已加载的 TaskDetail 列表
-# - contributors: 从 tasks 中聚合的 owner 列表
-# - 每个 TaskDetail.full_title 包含 sprint_name 前缀
-```
-
-### 模式 G：RPC 服务 + MCP + Voyager
-
-定义业务服务，同时服务 MCP 和 FastAPI。
-
-```python
-from fastapi import FastAPI
-from nexusx import RpcService, create_rpc_mcp_server, create_rpc_voyager
-
-class SprintService(RpcService):
-    """Sprint management."""
-
-    @classmethod
-    async def list_sprints(cls) -> list[dict]:
-        async with get_session() as session:
-            sprints = (await session.exec(select(Sprint))).all()
-            return [s.model_dump() for s in sprints]
-
-    @classmethod
-    async def get_sprint(cls, sprint_id: int) -> dict | None:
-        async with get_session() as session:
-            sprint = await session.get(Sprint, sprint_id)
-            return sprint.model_dump() if sprint else None
-
-services = [
-    {"name": "sprint", "service": SprintService, "description": "Sprint management"},
-]
-
-# MCP 服务（stdio 模式）
-mcp = create_rpc_mcp_server(services=services, name="Project API")
-
-# Voyager 可视化（FastAPI 挂载）
-app = FastAPI()
-voyager = create_rpc_voyager(
-    services=services,
-    er_manager=er,
-    name="Project API",
-)
-app.mount("/voyager", voyager)
-```
-
-AI 助手使用 RPC 的三层流程：
-1. `list_services()` → 发现 sprint 服务
-2. `describe_service(service_name="sprint")` → 查看 list_sprints、get_sprint 方法
-3. `call_rpc(service_name="sprint", method_name="get_sprint", params='{"sprint_id": 1}')`
-
----
-
-## 6. 约束与限制
-
-### GraphQL 模式
+### 10.1 通用约束
 
 | 约束 | 说明 |
 |------|------|
-| session_factory | DataLoader 关系加载需要 session_factory。不提供时，关系字段将无法加载 |
-| 列表关系分页 | 需要在 Relationship 上配置 `sa_relationship_kwargs={"order_by": "Entity.column"}` |
-| 单主键 | AutoQueryConfig 的 by_id 仅支持单主键实体 |
-| 精确匹配 | by_filter 仅支持字段精确匹配，复杂查询需自定义 @query 方法 |
-| snake_case 字段名 | 不会自动转为 camelCase |
-| @query 方法签名 | 第一个参数必须是 cls，装饰器自动转为 classmethod |
-| 实体发现 | 实体必须有 @query/@mutation 装饰器才会被主动发现。仅有 Relationship 引用的实体会被动纳入 |
-| Input 类型 | 方法参数中的 SQLModel/BaseModel 子类自动成为 GraphQL Input 类型 |
+| `session_factory` 必填场景 | GraphQLHandler 关系加载、ErManager、AutoQueryConfig、create_simple_mcp_server 关系加载 |
+| 列表关系分页 | 需在 Relationship 上配置 `sa_relationship_kwargs={"order_by": "Entity.column"}` |
+| 单主键约束 | `AutoQueryConfig.byId` 仅支持单主键实体；复合主键跳过 |
+| `by_filter` 精确匹配 | 仅字段精确匹配；复杂查询写自定义 `@query` |
+| snake_case 字段名 | **不会**自动转 camelCase；GraphQL 字段名按 `{Entity}{Method}` 拼接 |
+| `@query`/`@mutation` 第一参数 | 必须 `cls`；装饰器自动转 classmethod |
+| `ErManager.base` 与 `entities` | 互斥，不能同时提供 |
+| 实体发现 | 主动发现有 `@query`/`@mutation` 的类；仅 Relationship 引用的类被动纳入 |
 
-### Core API 模式
+### 10.2 Core API 特有约束
 
 | 约束 | 说明 |
 |------|------|
-| DTO 字段类型 | 关系字段必须使用 DefineSubset DTO 类型，不能用 SQLModel 实体 |
-| resolve_* 先于 post_* | post_* 在子树完全解析后执行，可安全读取 resolve_* 赋值的字段 |
-| Loader 依赖名匹配 | `Loader('author')` 要求 ErManager 中有名为 `author` 的关系 |
-| ErManager base/entities 互斥 | 不能同时提供 `base` 和 `entities` 参数 |
-| FK 字段自动隐藏 | `__subset__` 中的 FK 字段自动设为 `exclude=True`，但内部可访问 |
-| Implicit Auto-Loading 条件 | 必须同时满足：无 resolve_*、非 subset 字段、匹配关系名、DTO 类型兼容 |
+| DTO 关系字段类型 | 必须是 DTO（DefineSubset 子类），不能用 SQLModel 实体 |
+| `resolve_*` vs `post_*` 顺序 | `resolve_*` 先执行；`post_*` 在子树完全解析后 |
+| `post_default_handler` 保留字 | 不能同时定义同名 `default_handler` 字段（3.1.1+ 构造期 raise） |
+| `Loader("name")` 匹配 | 若源实体无此关系，回落到全局；多实体同名返回第一个并 warn |
+| FK 字段自动隐藏 | `__subset__` 中声明的 FK 自动 `exclude=True`，内部仍可访问 |
+| auto-load 失败静默 | 字段类型与关系不兼容时字段保持默认值；调试时手写 `resolve_*` 验证 |
+| `loader_instances` 仅影响 `Loader(Cls)` | 不影响 auto-load 路径（按名字查找） |
+
+### 10.3 UseCase 特有约束
+
+| 约束 | 说明 |
+|------|------|
+| service 方法必须是 async classmethod | `@query`/`@mutation` 装饰；元类自动发现 |
+| 方法必须有返回类型注解 | 否则 `MissingReturnAnnotationError` |
+| DTO 字段不能引用 SQLModel 实体 | 否则 `SQLModelInDtoFieldError`；必须用 DTO |
+| Layer 3 拒绝内省 | `__schema`/`__type`/`__typename` 返回 errors，引导用 Layer 1/2 |
+| service 名 / 方法名唯一 | 否则 `DuplicateServiceError` / `DuplicateMethodError` |
+
+### 10.4 版本特性（按版本新增）
+
+| 版本 | 特性 | 影响 API |
+|------|------|---------|
+| 2.10.0 | `post_default_handler` 收尾钩子 | Core API §5.6 |
+| 2.10.1 | scalar-list 字段隐式 auto-load | Core API §5.5 |
+| 3.0.0 | UseCase GraphQL MCP（移除 RPC 旧入口） | UseCase §6（移除 `RpcService`/`create_rpc_mcp_server`/`create_rpc_voyager`） |
+| 3.0.1 | `use_case.cli` typer 改 lazy import | 不装 `[cli]` 也能 `import nexusx` |
+| 3.1.0 | `Resolver(loader_instances=...)` | Core API §5.9 |
+| 3.1.1 | `_orm_to_dto` 保留 DB NULL；QueryExecutor per-field 异常写日志；`post_default_handler` 字段冲突检测 | Core API §5.6；§1.4 |
 
 ---
 
-## 7. 实体发现机制
+## 11. 执行流程（深度参考）
 
-GraphQLHandler 构造时执行实体发现：
-
-1. 扫描 `base` 的所有 SQLModel 子类
-2. 找到有 `@query` 或 `@mutation` 装饰器的类
-3. 递归遍历这些类的 `Relationship` 字段，纳入关联实体
-4. 为所有发现的实体生成 SDL 类型定义
-5. 为所有发现的实体创建 DataLoader（基于 SQLAlchemy inspect 的关系元数据）
-
-ErManager 构造时执行实体发现：
-
-1. 接收实体列表（通过 `base` 自动发现或 `entities` 显式指定）
-2. 检查每个实体的 SQLAlchemy ORM 关系
-3. 检查每个实体的 `__relationships__` 自定义关系
-4. 为每个关系创建对应的 DataLoader 类
-5. 若 `enable_pagination=True`，验证所有列表关系都配置了 `order_by`
-
-关系类型与 DataLoader 映射：
-
-| SQLAlchemy 关系方向 | DataLoader 类型 | SQL 模式 |
-|-------------------|----------------|---------|
-| MANYTOONE | `create_many_to_one_loader` | `WHERE target.id IN (:fk_values)` |
-| ONETOMANY（列表） | `create_one_to_many_loader` | `WHERE fk_col IN (:parent_ids)` |
-| ONETOMANY（标量） | `create_many_to_one_loader` | 同 MANYTOONE |
-| MANYTOMANY | `create_many_to_many_loader` | 通过关联表 JOIN |
-| CUSTOM（`__relationships__`） | 自定义 DataLoader | 由用户 loader 函数定义 |
-
----
-
-## 8. GraphQL 执行流程
+### 11.1 GraphQL 模式
 
 ```
 GraphQL Query String
-       │
-       ├─ 内省查询 (__schema / __type)
-       │   → IntrospectionGenerator 直接处理
-       │
-       └─ 普通查询
-           │
-           ├─ 1. QueryParser.parse() → FieldSelection 树
-           ├─ 2. 找到 @query 方法，执行用户代码（只加载标量字段）
-           ├─ 3. resolve_relationships：逐层 DataLoader 批量加载
-           │     每一层收集所有 FK 值，一次 SQL 批量查询
-           └─ 4. 按请求字段序列化结果
+   │
+   ├─ 内省（__schema / __type）→ IntrospectionGenerator 直接处理
+   └─ 普通查询
+       ├─ 1. QueryParser.parse() → FieldSelection 树
+       ├─ 2. 找到 @query 方法，执行用户代码（只取标量）
+       ├─ 3. resolve_relationships：逐层 DataLoader 批量加载
+       │     每层收集所有 FK 值，一次 SQL 批量查询
+       └─ 4. 按请求字段序列化结果
 ```
 
 分页 SQL（启用时）：
@@ -1168,62 +1192,63 @@ SELECT * FROM (
 ) sub WHERE _rn BETWEEN :start AND :end
 ```
 
-一条 SQL 为所有父实体获取各自的分页数据。
-
----
-
-## 9. Core API 执行流程
+### 11.2 Core API 模式
 
 ```
 resolver.resolve(dtos)
-       │
-       └─ _traverse(node, parent)
-           │
-           ├─ 1. 准备阶段
-           │     ├─ 设置 parent contextvar
-           │     ├─ ExposeAs：将字段值写入 ancestor_context
-           │     └─ 创建 Collector 实例
-           │
-           ├─ 2. resolve_* 方法 + implicit auto-load（并发）
-           │     ├─ 执行所有 resolve_* 方法
-           │     ├─ 扫描 implicit auto-load 字段
-           │     └─ traverse 已有对象字段
-           │
-           ├─ 3. post_* 方法（并发）
-           │     └─ 在子树完全就绪后执行
-           │
-           ├─ 4. SendTo → Collector
-           │     └─ 将 SendTo 字段值添加到祖先 Collector
-           │
-           └─ 5. 清理阶段
-                 ├─ 释放 per-node Collector
-                 └─ 重置 contextvar
+   │
+   └─ _traverse(node, parent)
+       ├─ 1. 准备阶段
+       │     ├─ 设置 parent contextvar
+       │     ├─ ExposeAs：字段值写入 ancestor_context
+       │     └─ 创建 Collector 实例
+       ├─ 2. resolve_* + implicit auto-load（并发 asyncio.gather）
+       │     ├─ 执行所有 resolve_*（loader_instances 优先于 cache）
+       │     ├─ 扫描 implicit auto-load 字段
+       │     └─ traverse 已有对象字段
+       ├─ 3. post_*（并发）
+       ├─ 4. post_default_handler（若存在；2.10.0+）
+       ├─ 5. SendTo → Collector
+       └─ 6. 清理：释放 per-node Collector、重置 contextvar
 ```
 
-**`build_dto_select` 优化查询：**
+### 11.3 UseCase GraphQL MCP Layer 3 执行边界
 
-根据 DefineSubset DTO 的字段定义，生成只包含所需列的 SQL SELECT 语句（而非 `SELECT *`）。
-
-```python
-from nexusx import build_dto_select
-
-# 参数：dto_class（DefineSubset 子类）、where（可选过滤条件）
-# 返回：SQLModel select 语句，仅包含 DTO __subset__ 中定义的列
-
-# 查全部
-stmt = build_dto_select(TaskSummary)
-async with async_session() as session:
-    rows = (await session.exec(stmt)).all()
-dtos = [TaskSummary(**dict(row._mapping)) for row in rows]
-
-# 带 where 条件
-stmt = build_dto_select(SprintDetail, where=Sprint.id == sprint_id)
-async with async_session() as session:
-    rows = (await session.exec(stmt)).all()
-if not rows:
-    return None
-dto = SprintDetail(**dict(rows[0]._mapping))
-return await Resolver().resolve(dto)
+```
+compose_query(app_name, query)
+   │
+   ├─ 内省（__schema/__type/__typename）→ 拒绝，返回 {data:null, errors:[...]}
+   └─ 普通查询
+       ├─ 1. 在 ComposeSchema 上解析 query
+       ├─ 2. 路由到对应 service 方法
+       ├─ 3. 调方法（service 内部自行 Resolver().resolve）
+       ├─ 4. 基于方法返回类型做字段投影（apply_selection）
+       └─ 5. 序列化
 ```
 
-**用法模式：** `build_dto_select` → session.exec → `dict(row._mapping)` → DTO 构造 → `Resolver().resolve()`
+**关键**：Layer 3 不在 service 返回值外再套一层 Resolver。service 方法内部已经显式 `Resolver().resolve(dtos)`，外层只做调方法 → 字段投影 → 序列化。
+
+---
+
+## 12. 公共 API 速查（`__all__` 完整对照）
+
+| 符号 | 类别 | 章节 |
+|------|------|------|
+| `query`, `mutation` | 装饰器 | §4.2 / §6.2 |
+| `GraphQLHandler` | GraphQL 核心 | §4.3 |
+| `AutoQueryConfig`, `add_standard_queries` | GraphQL 自动查询 | §4.4 |
+| `ErManager` | Core API 关系管理 | §5.3 |
+| `DefineSubset`, `SubsetConfig`, `build_dto_select` | Core API DTO | §5.2 / §5.8 |
+| `Loader` | Core API 依赖注入 | §5.4 |
+| `ExposeAs`, `SendTo`, `Collector`, `AutoLoad` | Core API 跨层数据流 | §5.7 |
+| `Relationship` | 自定义关系 | §5.10 |
+| `ErDiagram` | ER 可视化 | §8 |
+| `UseCaseService`, `UseCaseAppConfig`, `FromContext`, `SelectionError` | UseCase 核心 | §6.2 / §6.3 / §6.4 |
+| `create_use_case_graphql_mcp_server` | UseCase 4 层 MCP | §6.6 |
+| `build_compose_schema`, `ComposeSchema`, `ComposeSchemaError`, `compose_introspect` | UseCase schema | §6.5 |
+| `create_use_case_router` | UseCase FastAPI REST | §6.7 |
+| `create_jsonrpc_router` | UseCase JSON-RPC | §6.8 |
+| `create_use_case_cli` | UseCase Typer CLI | §6.9 |
+| `create_use_case_voyager` | UseCase 可视化 | §6.10 |
+
+`nexusx.mcp` 子模块：`create_simple_mcp_server`、`create_mcp_server`、`AppConfig`（见 §7）。
