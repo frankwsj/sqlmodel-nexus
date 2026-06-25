@@ -363,21 +363,35 @@ class TestVirtualRootSendToCollector:
         assert result.is_consistent is True
 
 
+class _VirtInner(BaseModel):
+    """Module-level Inner so the loader and the field type match exactly."""
+    value: str
+
+
+async def _virtual_to_virtual_loader(keys: list[str]) -> list[_VirtInner | None]:
+    """Loader for TestVirtualToVirtualRelationship.
+
+    Returns ``_VirtInner`` instances directly — the field type matches, so
+    no conversion is needed. (Earlier versions of this test returned a
+    DIFFERENT locally-scoped ``_Inner`` class and relied on duck typing;
+    that worked only because the resolver used to skip conversion for any
+    BaseModel. The resolver is stricter now.)
+    """
+    return [_VirtInner(value=f"value-for-{k}") for k in keys]
+
+
 class TestVirtualToVirtualRelationship:
     """Edge Case A — virtual root declares relationship to another BaseModel."""
 
     async def test_virtual_to_virtual_traversal(self):
-        class Inner(BaseModel):
-            value: str
-
         class Outer(BaseModel):
             oid: str
-            inner: Inner | None = None
+            inner: _VirtInner | None = None
 
             __relationships__ = [
                 Relationship(
                     fk="oid",
-                    target=Inner,
+                    target=_VirtInner,
                     name="inner",
                     loader=_virtual_to_virtual_loader,
                 ),
@@ -393,16 +407,6 @@ class TestVirtualToVirtualRelationship:
         result = await resolver.resolve(root)
         assert result.inner is not None
         assert result.inner.value == "value-for-key-1"
-
-
-async def _virtual_to_virtual_loader(keys: list[str]) -> list[BaseModel | None]:
-    """Loader for TestVirtualToVirtualRelationship."""
-    from pydantic import BaseModel as _BM
-
-    class _Inner(_BM):
-        value: str
-
-    return [_Inner(value=f"value-for-{k}") for k in keys]
 
 
 class TestSameBaseModelMultipleRelationships:

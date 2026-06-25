@@ -1368,10 +1368,17 @@ class Resolver:
                     items_list = result if result is not None else []
                     if dto_cls and items_list:
                         if is_custom:
-                            # CUSTOM rels may already yield BaseModels
-                            # (skip ORM→DTO for those, convert the rest)
+                            # CUSTOM rels may already yield the right DTO
+                            # type — trust the loader only when it actually
+                            # returned ``dto_cls`` instances (or subclasses).
+                            # The looser ``isinstance(r, BaseModel)`` check
+                            # we used before treated SQLModel source rows as
+                            # "already converted" (SQLModel IS a BaseModel),
+                            # silently skipping projection. See
+                            # tests/test_definesubset_basemodel.py::
+                            #   TestCustomRelationshipAutoConversion.
                             items_list = [
-                                r if isinstance(r, BaseModel)
+                                r if isinstance(r, dto_cls)
                                 else self._orm_to_dto(r, dto_cls)
                                 for r in items_list
                             ]
@@ -1390,7 +1397,7 @@ class Resolver:
                 else:
                     if result is None:
                         continue
-                    if dto_cls and not (is_custom and isinstance(result, BaseModel)):
+                    if dto_cls and not (is_custom and isinstance(result, dto_cls)):
                         result = self._orm_to_dto(result, dto_cls)
                     object.__setattr__(node, field_name, result)
                     auto_loaded.add((id(node), field_name))
