@@ -7,7 +7,7 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel
 
-from nexusx.context import Collector, ExposeAs, SendTo
+from nexusx.context import Collector, ExposeAs, ICollector, SendTo
 from nexusx.resolver import Loader, Resolver
 
 # ──────────────────────────────────────────────────────────
@@ -703,3 +703,160 @@ class TestCollectorIdentity:
         result = await Resolver().resolve(parent)
 
         assert result.is_consistent is True
+
+
+# ──────────────────────────────────────────────────────────
+# Test: ICollector implementations and Collector subclasses
+# (migrated from pydantic-resolve test_collector_subclass.py — #293)
+#
+# Before the deepcopy fix, _phase_b_prepare_collectors hardcoded
+# `Collector(alias=alias, flat=flat)` when instantiating per-node collectors,
+# which silently downgraded any:
+#   - direct ICollector implementation (lost all __init__ config + wrong val)
+#   - Collector subclass with extra __init__ config (lost the extra attrs)
+# to the base Collector. deepcopy preserves the prototype transparently.
+# ──────────────────────────────────────────────────────────
+
+
+class MapCollector(ICollector):
+    """ICollector with dict-valued state + key_fn config."""
+
+    def __init__(self, alias: str, key_fn):
+        self.alias = alias
+        self.key_fn = key_fn
+        self.val: dict = {}
+
+    def add(self, val):
+        self.val[self.key_fn(val)] = val
+
+    def values(self):
+        return list(self.val.values())
+
+
+class TopNCollector(Collector):
+    """Collector subclass with extra `n` config in __init__."""
+
+    def __init__(self, alias, n):
+        super().__init__(alias)
+        self.n = n
+
+    def add(self, val):
+        self.val.append(val)
+        if len(self.val) > self.n:
+            self.val = self.val[-self.n:]
+
+
+class SimpleSubCollector(Collector):
+    """Only overrides add() — backward-compat baseline."""
+
+    def add(self, val):
+        self.val.append(f"sub-{val}")
+
+
+class TestCollectorSubclass:
+    async def test_map_collector_dedupes(self):
+        """MapCollector (implements ICollector directly) must keep key_fn + dict val."""
+
+        class Comment(BaseModel):
+            email: Annotated[str, SendTo("unique_emails")]
+
+        class Post(BaseModel):
+            comments: list[Comment] = []
+            unique_emails: list[str] = []
+
+            def post_unique_emails(
+                self,
+                collector=MapCollector("unique_emails", key_fn=lambda v: v),
+            ):
+                return collector.values()
+
+        post = Post(comments=[
+            Comment(email="a@x.com"),
+            Comment(email="a@x.com"),
+            Comment(email="b@x.com"),
+        ])
+        result = await Resolver().resolve(post)
+        assert sorted(result.unique_emails) == ["a@x.com", "b@x.com"]
+
+    async def test_sibling_branches_isolated(self):
+        """Each Post node must see only its own comments' unique_emails."""
+
+        class Comment(BaseModel):
+            email: Annotated[str, SendTo("unique_emails")]
+
+        class Post(BaseModel):
+            comments: list[Comment] = []
+            unique_emails: list[str] = []
+
+            def post_unique_emails(
+                self,
+                collector=MapCollector("unique_emails", key_fn=lambda v: v),
+            ):
+                return collector.values()
+
+        class Root(BaseModel):
+            posts: list[Post] = []
+
+        root = Root(posts=[
+            Post(comments=[Comment(email="a@x.com"), Comment(email="b@x.com")]),
+            Post(comments=[Comment(email="c@x.com"), Comment(email="c@x.com")]),
+        ])
+        result = await Resolver().resolve(root)
+        assert sorted(result.posts[0].unique_emails) == ["a@x.com", "b@x.com"]
+        assert sorted(result.posts[1].unique_emails) == ["c@x.com"]
+
+    async def test_sequential_resolve_no_leak(self):
+        """Resolver reused across two trees must not carry collector state over."""
+
+        class Comment(BaseModel):
+            email: Annotated[str, SendTo("unique_emails")]
+
+        class Post(BaseModel):
+            comments: list[Comment] = []
+            unique_emails: list[str] = []
+
+            def post_unique_emails(
+                self,
+                collector=MapCollector("unique_emails", key_fn=lambda v: v),
+            ):
+                return collector.values()
+
+        resolver = Resolver()
+        p1 = await resolver.resolve(Post(comments=[Comment(email="a@x.com")]))
+        p2 = await resolver.resolve(Post(comments=[Comment(email="b@x.com")]))
+        assert p1.unique_emails == ["a@x.com"]
+        assert p2.unique_emails == ["b@x.com"]
+
+    async def test_topn_collector_preserves_n_config(self):
+        """TopNCollector's `n` attr must survive per-node instantiation."""
+
+        class Item(BaseModel):
+            score: Annotated[int, SendTo("top_scores")]
+
+        class Bucket(BaseModel):
+            items: list[Item] = []
+            top_scores: list[int] = []
+
+            def post_top_scores(self, collector=TopNCollector("top_scores", n=2)):
+                return collector.values()
+
+        bucket = Bucket(items=[Item(score=i) for i in [10, 20, 30, 40]])
+        result = await Resolver().resolve(bucket)
+        assert result.top_scores == [30, 40]
+
+    async def test_simple_subcollector_still_works(self):
+        """Backward-compat: a Collector subclass that only overrides add()."""
+
+        class Leaf(BaseModel):
+            name: Annotated[str, SendTo("leaf_names")]
+
+        class Branch(BaseModel):
+            leaves: list[Leaf] = []
+            decorated: list[str] = []
+
+            def post_decorated(self, collector=SimpleSubCollector("leaf_names")):
+                return collector.values()
+
+        branch = Branch(leaves=[Leaf(name="a"), Leaf(name="b")])
+        result = await Resolver().resolve(branch)
+        assert result.decorated == ["sub-a", "sub-b"]

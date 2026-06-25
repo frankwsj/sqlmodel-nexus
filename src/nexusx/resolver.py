@@ -35,6 +35,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import typing
 import weakref
@@ -47,7 +48,6 @@ from pydantic import BaseModel
 from pydantic.errors import PydanticUserError
 
 from nexusx.context import (
-    Collector,
     ICollector,
     scan_expose_fields,
     scan_send_to_fields,
@@ -134,7 +134,7 @@ class _MethodParamInfo:
     has_parent: bool = False
     has_ancestor_context: bool = False
     loader_deps: list[tuple[str, Depends]] = field(default_factory=list)
-    collector_deps: list[tuple[str, Collector]] = field(default_factory=list)
+    collector_deps: list[tuple[str, ICollector]] = field(default_factory=list)
 
 
 @dataclass
@@ -153,8 +153,13 @@ class _ClassMeta:
     # Special post_default_handler method, if present: (attr_name, param_info).
     # Runs after all post_* methods; return value is ignored.
     post_default_handler: tuple[str, _MethodParamInfo] | None = None
-    # Collector aliases found in post_* / post_default_handler: alias -> flat
-    collector_aliases: dict[str, bool] = field(default_factory=dict)
+    # Collector prototypes declared via Collector(...) defaults on post_* /
+    # post_default_handler params: alias -> the original default instance.
+    # We deepcopy this prototype per node at Phase B-1 so any ICollector
+    # implementation / Collector subclass keeps its __init__-set config
+    # (key_fn, n, dict-valued aggregator, ...) instead of being silently
+    # downgraded to a base Collector. (pydantic-resolve #293 equivalent.)
+    collector_instances: dict[str, ICollector] = field(default_factory=dict)
     # Whether this class or any descendant needs traversal.
     # None = not yet computed; True/False = computed result.
     should_traverse: bool | None = None
@@ -203,7 +208,7 @@ def _analyze_method_params(
         if param.default is not inspect.Parameter.empty:
             if isinstance(param.default, Depends):
                 info.loader_deps.append((param_name, param.default))
-            elif include_collectors and isinstance(param.default, Collector):
+            elif include_collectors and isinstance(param.default, ICollector):
                 info.collector_deps.append((param_name, param.default))
 
     return info
@@ -255,8 +260,8 @@ def _build_class_meta(kls: type) -> _ClassMeta:
                 param_info = _analyze_method_params(attr, include_collectors=True)
                 meta.post_default_handler = (attr_name, param_info)
                 for _pname, collector in param_info.collector_deps:
-                    if collector.alias not in meta.collector_aliases:
-                        meta.collector_aliases[collector.alias] = collector.flat
+                    if collector.alias not in meta.collector_instances:
+                        meta.collector_instances[collector.alias] = collector
             continue
 
         if attr_name.startswith(RESOLVE_PREFIX):
@@ -276,8 +281,8 @@ def _build_class_meta(kls: type) -> _ClassMeta:
                 meta.post_params[attr_name] = param_info
                 # Record collector aliases for _prepare_collectors
                 for _pname, collector in param_info.collector_deps:
-                    if collector.alias not in meta.collector_aliases:
-                        meta.collector_aliases[collector.alias] = collector.flat
+                    if collector.alias not in meta.collector_instances:
+                        meta.collector_instances[collector.alias] = collector
 
     return meta
 
@@ -325,7 +330,7 @@ def _compute_should_traverse(kls: type) -> bool:
     meta.should_traverse = True
 
     # Check own configuration
-    if (meta.resolve_methods or meta.post_methods or meta.collector_aliases
+    if (meta.resolve_methods or meta.post_methods or meta.collector_instances
             or meta.post_default_handler is not None
             or scan_expose_fields(kls) or scan_send_to_fields(kls)):
         return True
@@ -389,6 +394,20 @@ class Resolver:
         loader_instances: dict[type[DataLoader], DataLoader] | None = None,
     ):
         self._registry = loader_registry
+        # Validate context up-front so misuse fails at construction, not as a
+        # confusing AttributeError / KeyError later. None and a non-empty dict
+        # are the only valid shapes — empty dict is almost always a bug
+        # (pydantic-resolve #291 equivalent).
+        if context is not None:
+            if not isinstance(context, dict):
+                raise TypeError(
+                    f'context must be a dict, got {type(context).__name__}.'
+                )
+            if not context:
+                raise ValueError(
+                    'context must be a non-empty dict, or None/omitted if no '
+                    'context is needed.'
+                )
         self._context = context or {}
         # Per-node collector instances keyed by id(node). Safe because every
         # node is held alive by its _LevelNode entry across the levels list
@@ -410,6 +429,11 @@ class Resolver:
         # Auto-load plan cache: DTO class → auto-load specs (per Resolver,
         # avoids id(registry) reuse issues across ErManager lifetimes)
         self._auto_load_cache: dict[type, list] = {}
+        # Reentrancy / concurrent-call guard. Per-call mutable state lives on
+        # self (_node_collectors, _loader_cache, levels list), so two overlapping
+        # resolve() calls on the same instance would clobber each other and
+        # surface as a cryptic KeyError. Detect and raise clearly instead.
+        self._in_resolve: bool = False
 
     @staticmethod
     def _validate_loader_instances(loader_instances: dict[Any, Any]) -> None:
@@ -1062,7 +1086,7 @@ class Resolver:
             for idx, ln in enumerate(old_level):
                 item, meta, ctx, old_snap = ln
 
-                if not meta.collector_aliases:
+                if not meta.collector_instances:
                     # No own collectors — inherit parent snapshot by reference.
                     parent_ln = (
                         node_id_to_ln.get(id(item.parent))
@@ -1076,9 +1100,14 @@ class Resolver:
                     )
                     parent_snap = parent_ln[3] if parent_ln is not None else _EMPTY_SNAPSHOT
 
+                    # Deepcopy the user-declared Collector prototype so any
+                    # ICollector implementation (or Collector subclass with
+                    # extra __init__ config) survives per-node instantiation.
+                    # Hard-coding Collector(alias=..., flat=...) here would
+                    # silently downgrade subclasses — pydantic-resolve #293.
                     own: dict[str, ICollector] = {
-                        alias: Collector(alias=alias, flat=flat)
-                        for alias, flat in meta.collector_aliases.items()
+                        alias: copy.deepcopy(prototype)
+                        for alias, prototype in meta.collector_instances.items()
                     }
                     self._node_collectors[id(item.node)] = own
                     if parent_snap:
@@ -1154,7 +1183,7 @@ class Resolver:
                         post_jobs.append((ln, field_name))
                 if meta.send_to_map:
                     level_has_send_to = True
-                if meta.collector_aliases:
+                if meta.collector_instances:
                     level_has_collectors = True
                 if meta.post_default_handler is not None:
                     level_has_default_handler = True
@@ -1215,7 +1244,7 @@ class Resolver:
             if level_has_collectors:
                 for ln in level:
                     item, meta, _ctx, _snap = ln
-                    if meta.collector_aliases:
+                    if meta.collector_instances:
                         self._node_collectors.pop(id(item.node), None)
 
     async def _batch_auto_load(
@@ -1350,14 +1379,28 @@ class Resolver:
         Returns:
             The same node with all resolve_* and post_* fields populated.
         """
-        # Resolver is request-scoped by convention: each resolve() starts a
-        # fresh traversal with empty caches. Reusing a Resolver instance
-        # across requests is supported but pays the cache-clear cost on every
-        # call; long-lived resolvers that want cross-request caching should
-        # bypass this method and call _traverse directly. (issue #77 review)
-        if self._registry is not None and hasattr(self._registry, "clear_cache"):
-            self._registry.clear_cache()
-        self._node_collectors.clear()
-        self._loader_cache.clear()
-        await self._traverse(node)
-        return node
+        # Resolver is NOT reentrant: per-call state (_node_collectors,
+        # _loader_cache, the levels list inside _traverse) lives on self.
+        # Two overlapping resolve() calls on the same instance would clobber
+        # each other and surface as a cryptic KeyError. Detect and raise.
+        if self._in_resolve:
+            raise RuntimeError(
+                'Resolver.resolve() is already running on this instance. '
+                'A Resolver cannot be shared across concurrent resolve() '
+                'calls — create a fresh Resolver per call.'
+            )
+        self._in_resolve = True
+        try:
+            # Resolver is request-scoped by convention: each resolve() starts a
+            # fresh traversal with empty caches. Reusing a Resolver instance
+            # across requests is supported but pays the cache-clear cost on every
+            # call; long-lived resolvers that want cross-request caching should
+            # bypass this method and call _traverse directly. (issue #77 review)
+            if self._registry is not None and hasattr(self._registry, "clear_cache"):
+                self._registry.clear_cache()
+            self._node_collectors.clear()
+            self._loader_cache.clear()
+            await self._traverse(node)
+            return node
+        finally:
+            self._in_resolve = False
