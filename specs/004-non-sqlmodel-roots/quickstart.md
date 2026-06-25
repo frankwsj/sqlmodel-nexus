@@ -171,24 +171,35 @@ Validates FR-009, SC-004.
 
 ```python
 def test_er_diagram_with_virtual_entity(session_factory):
-    from nexusx.er_diagram import ErDiagram  # or whatever the public entry is
+    from nexusx import ErDiagram
+    from nexusx.voyager.er_diagram_dot import ErDiagramDotBuilder
 
     er = ErManager(entities=[Agent], session_factory=session_factory)
     er.add_virtual_entities([CurrentUserRoot])
 
-    diagram = ErDiagram.from_manager(er)  # or equivalent
-    dot = diagram.to_dot()
+    # Data path — inspect entities and relationships (no DOT rendering).
+    diagram = ErDiagram.from_er_manager(er)
+    virtual = next(e for e in diagram.entities if e.name == "CurrentUserRoot")
+    assert virtual.is_virtual is True          # FR-009 visual signal carried in data
+    assert virtual.fk_fields == []             # no SQLAlchemy mapper → no FKs
 
-    # Virtual node shape and label
-    assert '"CurrentUserRoot"' in dot
-    assert 'shape=note' in dot
-    assert '«virtual»\\nCurrentUserRoot' in dot or '«virtual»' in dot
-    # Edge to AgentDTO
-    assert 'CurrentUserRoot' in dot and 'Agent' in dot
-    # No exceptions raised during generation
+    # DOT path — render to graphviz and assert Contract 3 visual distinction.
+    builder = ErDiagramDotBuilder(er, show_fields="all")
+    builder.analysis()
+    dot = builder.render_dot()
+
+    # Virtual node appears, with the four Contract 3 signals:
+    assert "CurrentUserRoot" in dot
+    assert "cluster_virtual" in dot               # separate dashed cluster
+    assert "«virtual»\\nCurrentUserRoot" in dot    # UML stereotype label
+    assert "FFF9C4" in dot                         # light yellow header fill
+    # Edge to Agent / AgentDTO is drawn.
+    assert "Agent" in dot
 ```
 
-**Expected outcome**: DOT output contains the virtual node with `shape=note` and the `«virtual»` stereotype. Edges from `CurrentUserRoot` to `Agent` (or its DTO) are present.
+**Expected outcome**: `ErDiagram.from_er_manager(er)` returns an `EntityInfo` with `is_virtual=True`; the DOT output groups `CurrentUserRoot` into a dashed `cluster_virtual` subgraph with a yellow header (`#FFF9C4`) and the `«virtual»\n` stereotype prefix. Edges to `Agent` are drawn with the same arrow style as SQLModel-to-SQLModel edges.
+
+**Implementation note**: the original plan called for `shape=note`, but the existing renderer uses HTML labels (`shape=plain`) for *all* nodes — switching shape for one node type would break the HTML label rendering. The visual distinction is therefore carried by **fill color** + **stereotype label prefix** + **separate cluster**, which collectively satisfy FR-009. See `contracts/api.md` Contract 3 for the agreed rules.
 
 ## Scenario 7: Backward compatibility — pure SQLModel path unchanged
 

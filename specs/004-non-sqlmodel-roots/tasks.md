@@ -251,3 +251,30 @@ Every spec FR is covered by at least one task. Every Edge Case has an explicit t
 | Edge H (same BaseModel across relationships) | T022 |
 | Edge I (unregistered BaseModel source) | T024 |
 | Edge J (subset field + relationship collision) | T023 |
+
+---
+
+## Phase 7: Convergence
+
+**Purpose**: Close gaps surfaced by `/speckit-converge` after the initial `/speckit-implement` pass. These items trace to spec/plan/contract intent that the first pass marked complete but did not fully deliver.
+
+**Appended**: 2026-06-25 (post-review of branch `004-non-sqlmodel-roots` at commit `b0f6b52`).
+
+- [X] T037 Implement virtual-node visual distinction in DOT/Voyager rendering per FR-009 / Contract 3 (missing). `src/nexusx/voyager/er_diagram_dot.py` and/or `src/nexusx/voyager/render.py` currently render plain BaseModel virtual entities with the same shape, fill, and label as SQLModel entities. Add a virtual-entity branch that emits `shape=note`, `style=filled, fillcolor="#FFF9C4"`, label `«virtual»\n{ClassName}`, grouped in a dashed `cluster_virtual` subgraph. Signal virtual-ness via either (a) `not issubclass(entity, SQLModel)` at render time, or (b) plumbing an `is_virtual` flag from `ErDiagram.EntityInfo` (preferred once T040 lands). Verify against Quickstart S6's assertions (`'shape=note' in dot`, `'«virtual»' in dot`).
+- [X] T038 Strengthen ER/Voyager visual-distinction tests to assert the spec'd visual properties per FR-009 / T028 (partial). `tests/test_virtual_entities_er.py::TestVoyagerDotBuilderMixed` currently asserts only that the virtual node's name and fields appear in DOT output. Add assertions that `shape=note`, `«virtual»`, and `cluster_virtual` (or `fillcolor="#FFF9C4"`) appear for virtual entities and do NOT appear for SQLModel entities. Mirror the assertions in Quickstart S6.
+- [X] T039 Document the `add_virtual_entities()` API and widened `DefineSubset.__subset__` source per SC-005 / SC-006 / T035 (missing). `grep "add_virtual_entities" docs/ README.md CLAUDE.md` returns zero matches; the new public API is undocumented outside `specs/`. Add a "Virtual Entities" guide under `docs/guide/` (or `docs/reference/`) covering: (a) the API contract, (b) the migration from `_subset_registry[X] = Y` hacks (use Quickstart S11 as the worked example), (c) the widened `DefineSubset.__subset__` source. Update `CLAUDE.md` if the project keeps a public-API index there. SC-005 ("developer reading only official docs…") and SC-006 ("mechanical migration path… documented") are otherwise unmet.
+- [X] T040 Reconcile `ErDiagram` data model with Contract 3 — either add the `virtual_entities: list[type[BaseModel]]` field OR update Contract 3 / data-model.md to match the chosen design per Contract 3 / data-model.md / T025 (partial). Current implementation mixes virtual entities into `entities` with `table_name=""` and no `virtual_entities` field. Contract 3 and `data-model.md` both specify the separate field. Pick one direction: (a) add the field + populate it in `ErDiagram._build`, then have DOT/Voyager read from it; OR (b) update `contracts/api.md` Contract 3 and `data-model.md` to document "virtual entities live in `entities` with `table_name == ''` as the signal" as the agreed design. Either way, code and contract must agree before PR.
+- [X] T041 Strengthen the zero-virtual-entities regression test OR relax T029's wording per T029 (partial). T029 says "output is bit-identical to today's SQLModel-only ER generation"; the current test only checks entity names. Either (a) add a snapshot/equality assertion comparing `ErDiagram.from_er_manager(er_with_no_virtuals)` against `ErDiagram.from_sqlmodel(...)` for the same entity set, OR (b) reword T029 to "functionally equivalent (same entity names + relationship edges)" and add a one-line note in tasks.md explaining the relaxation.
+- [X] T042 Update `_orm_to_dto` docstring to clarify the function is invoked only for SQLModel sources per T014 (partial). `src/nexusx/resolver.py` `_orm_to_dto` body is type-agnostic but its docstring/name still imply ORM-only. Add a one-line docstring note: "Invoked only when the source is a SQLModel (ORM row → DTO). BaseModel sources are constructed directly by the user and never pass through this function." Rename to `_source_to_dto` is OUT OF SCOPE — research.md R8 explicitly defers it. Mark T014's checkbox honestly once done.
+
+---
+
+## Phase 8: Convergence
+
+**Purpose**: Close residual doc-accuracy gaps surfaced by the second `/speckit-converge` pass after T037–T042 landed. Code behaviour is fully converged; remaining items are documentation alignment so users copying public snippets get runnable code.
+
+**Appended**: 2026-06-25 (post-implementation review of T037–T042).
+
+- [X] T043 Update Quickstart S6 to match the actual `add_virtual_entities` / ER-rendering API per tasks.md T034 / Quickstart S6 (partial). `specs/004-non-sqlmodel-roots/quickstart.md:179-184` still references `ErDiagram.from_manager(er)`, `diagram.to_dot()`, and `assert 'shape=note' in dot` — none of which exist in the implementation. Replace with the real API: either `ErDiagram.from_er_manager(er)` (data path) or `ErDiagramDotBuilder(er, show_fields='all').render_dot()` (DOT path). Update the visual-distinction assertions to check for the actual tokens delivered by T037: `cluster_virtual`, `«virtual»\nCurrentUserRoot`, and `#FFF9C4` (or `FFF9C4`). Users copy-pasting S6 today get immediate failures; this task makes the snippet runnable as documented.
+- [X] T044 Add a `Virtual Entities` row to the docs index so the new guide is discoverable per SC-005 / tasks.md T035 (partial). `docs/index.md:49-57` and `docs/index.zh.md:49-57` list every existing guide but omit `virtual_entities{,.zh}.md` (added in T039). Insert one row in each index linking to `./guide/virtual_entities.md` and `./guide/virtual_entities.zh.md` respectively. Without this, the guide exists but is reachable only by direct URL — undermining SC-005's "developer reading only the official docs can implement… in under 15 minutes".
+

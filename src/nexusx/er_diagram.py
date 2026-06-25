@@ -49,6 +49,7 @@ class EntityInfo:
     fields: list[str]
     fk_fields: list[str]
     relationships: list[RelationInfo] = field(default_factory=list)
+    is_virtual: bool = False
 
 
 @dataclass
@@ -160,6 +161,7 @@ class ErDiagram:
                 table_name=table_name,
                 fields=scalar_fields,
                 fk_fields=fk_fields,
+                is_virtual=not is_sqlmodel,
             )
             entity_map[entity] = entity_info
 
@@ -250,6 +252,8 @@ class ErDiagram:
         # Entity definitions
         for entity in self.entities:
             lines.append(f"    {entity.name} {{")
+            if entity.is_virtual:
+                lines.append("        %% virtual non-SQLModel root")
             for fname in entity.fields:
                 lines.append(f"        {fname}")
             lines.append("    }")

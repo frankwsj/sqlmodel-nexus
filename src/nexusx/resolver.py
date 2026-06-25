@@ -700,7 +700,17 @@ class Resolver:
 
     @classmethod
     def _orm_to_dto(cls, orm_instance: Any, dto_cls: type[BaseModel]) -> BaseModel:
-        """Convert a SQLModel ORM instance to a DefineSubset DTO."""
+        """Convert a SQLModel ORM instance to a DefineSubset DTO.
+
+        Invoked only when the DefineSubset source is a SQLModel (an ORM row
+        exists to convert). BaseModel sources — registered via
+        ``ErManager.add_virtual_entities()`` or used directly — bypass this
+        function entirely; the user constructs DTO instances from kwargs /
+        ``model_validate`` and the runtime never needs the ORM→DTO path.
+        The function body is type-agnostic (``getattr`` over subset fields)
+        and would technically work on BaseModel instances too, but no call
+        site passes one.
+        """
         subset_fields = cls._dto_fields_cache.get(dto_cls)
         if subset_fields is None and dto_cls not in cls._dto_fields_cache:
             subset_fields = getattr(dto_cls, "__subset_fields__", None)

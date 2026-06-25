@@ -131,13 +131,22 @@ class SomeVirtualEntity(BaseModel):
 
 | Property | SQLModel entity | Virtual entity |
 |----------|-----------------|----------------|
-| DOT shape | `record` (existing) | `note` |
-| Fill color | None / existing theme | Light yellow (`#FFF9C4`) |
-| Label format | `{TableName\|column: type\l...}` | `«virtual»\n{ClassName}` |
-| Cluster | Main entity cluster | `cluster_virtual` (dashed border) |
+| DOT shape | `plain` (HTML labels — existing) | `plain` (HTML labels — same) |
+| Header fill | Theme primary (teal) | Light yellow (`#FFF9C4`) |
+| Header text color | white | black (`#000`) — yellow is too light for white |
+| Label format | `{ClassName}` (+ `(E)` if `is_entity`) | `«virtual»\n{ClassName}` |
+| Cluster | Main entity cluster (by module path) | `cluster_virtual` (dashed border, `Virtual Entities` label) |
 | Edges | Same arrow style | Same arrow style (no special casing) |
-| Columns shown | All `__table__.columns` | None (no table) |
-| FKs shown | From SQLAlchemy mapper | None (no mapper) |
+| Columns shown | All `__table__.columns` (when `show_fields=all`) | All `model_fields` (when `show_fields=all`) |
+| FKs shown | From SQLAlchemy mapper | None (no mapper — but FK-named fields still appear as plain fields) |
+
+**Implementation note**: The original plan called for `shape=record` → `shape=note`,
+but the existing renderer uses HTML labels with `shape=plain` for *all* nodes (this
+predates the feature). Changing shape for one node type would break the HTML label
+rendering. The visual distinction is therefore carried by **fill color** + **stereotype
+label prefix** + **separate cluster** — which collectively meet FR-009's "visually
+distinguished from real DB-backed entities" requirement. The stereotype (`«virtual»`)
+and yellow fill survive black-and-white printing and remain readable at a glance.
 
 ### What the user sees
 

@@ -119,6 +119,48 @@ class TestErDiagramMixedEntities:
         # SQLModel entities still present.
         assert "_User" in entity_names
 
+    def test_zero_virtual_entities_functionally_equivalent_to_from_sqlmodel(self):
+        """T029 regression — for the same SQLModel-only entity set, the
+        ``from_er_manager`` and ``from_sqlmodel`` paths produce ER diagrams
+        with the same entity names, fields, and relationship edges.
+
+        The two paths use different code internally (``from_er_manager``
+        reads pre-computed RelationshipInfo from the registry;
+        ``from_sqlmodel`` re-discovers via SQLAlchemy inspection) but the
+        output must be functionally equivalent. Bit-identical string output
+        is NOT required (dict ordering may differ); the entity-set,
+        field-set, and edge-set must match.
+        """
+        er = _make_er()  # _User, _Post — both SQLModel
+        diagram_via_manager = ErDiagram.from_er_manager(er)
+        diagram_via_sqlmodel = ErDiagram.from_sqlmodel([_User, _Post])
+
+        def _signature(d: ErDiagram) -> tuple[set, set, set]:
+            names = {e.name for e in d.entities}
+            fields = {(e.name, tuple(sorted(e.fields))) for e in d.entities}
+            edges = {
+                (r.source, r.target, r.name, r.relation_type)
+                for e in d.entities for r in e.relationships
+            }
+            return names, fields, edges
+
+        assert _signature(diagram_via_manager) == _signature(diagram_via_sqlmodel)
+
+    def test_zero_virtual_entities_dot_output_has_no_cluster_virtual(self):
+        """When no virtual entities are registered, DOT output contains no
+        ``cluster_virtual`` and no ``«virtual»`` stereotype — zero-virtual
+        rendering is bit-equivalent to the pre-feature baseline."""
+        er = _make_er()  # no add_virtual_entities call
+
+        builder = ErDiagramDotBuilder(er)
+        builder.analysis()
+        dot = builder.render_dot()
+
+        assert "cluster_virtual" not in dot
+        assert "«virtual»" not in dot
+        assert "FFF9C4" not in dot
+        assert "Virtual Entities" not in dot
+
 
 # ──────────────────────────────────────────────────────────
 # Voyager DOT builder — mixed entities
@@ -165,3 +207,72 @@ class TestVoyagerDotBuilderMixed:
         assert "CurrentUser" in dot
         assert "_Post" in dot
         assert "posts" in dot
+
+
+class TestVoyagerDotBuilderVisualDistinction:
+    """Contract 3 / T038 — virtual entities must be visually distinguished
+    from SQLModel entities in DOT output.
+
+    The four required signals:
+      - ``cluster_virtual`` subgraph grouping all virtual nodes
+      - ``«virtual»\\n{Name}`` UML stereotype label
+      - Light yellow fill (``#FFF9C4``) on the node header
+      - ``Virtual Entities`` cluster label
+    """
+
+    def test_cluster_virtual_subgraph_present(self):
+        er = _make_er()
+        er.add_virtual_entities([CurrentUser])
+
+        builder = ErDiagramDotBuilder(er)
+        builder.analysis()
+        dot = builder.render_dot()
+
+        assert "cluster_virtual" in dot
+        assert "Virtual Entities" in dot
+
+    def test_virtual_node_has_stereotype_label(self):
+        """The «virtual» UML stereotype appears before the class name."""
+        er = _make_er()
+        er.add_virtual_entities([CurrentUser])
+
+        builder = ErDiagramDotBuilder(er)
+        builder.analysis()
+        dot = builder.render_dot()
+
+        assert "«virtual»" in dot
+        # Stereotype is adjacent to the virtual class name.
+        assert "«virtual»\\nCurrentUser" in dot
+
+    def test_virtual_node_has_yellow_fill(self):
+        """The Contract 3 fill color (#FFF9C4) appears in DOT for virtual header."""
+        er = _make_er()
+        er.add_virtual_entities([CurrentUser])
+
+        builder = ErDiagramDotBuilder(er)
+        builder.analysis()
+        dot = builder.render_dot()
+
+        assert "#FFF9C4" in dot or "FFF9C4" in dot
+
+    def test_sqlmodel_node_does_not_carry_virtual_signals(self):
+        """SQLModel entities must NOT receive virtual styling."""
+        er = _make_er()
+        er.add_virtual_entities([CurrentUser])
+
+        builder = ErDiagramDotBuilder(er)
+        builder.analysis()
+        dot = builder.render_dot()
+
+        # The _User header line must not carry the stereotype or yellow fill.
+        # (Look at the segment that defines _User's header specifically.)
+        user_idx = dot.find('"__main__._User"')
+        if user_idx == -1:
+            # Test fixtures use a different module path; fall back to checking
+            # the global stereotype count instead: «virtual» appears exactly
+            # once (one virtual entity), not multiplied.
+            assert dot.count("«virtual»") == 1
+        else:
+            user_segment = dot[user_idx:user_idx + 1500]
+            assert "«virtual»" not in user_segment
+            assert "FFF9C4" not in user_segment

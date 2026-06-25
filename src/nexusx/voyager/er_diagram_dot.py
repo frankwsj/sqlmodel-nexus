@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import typing
 
+from sqlmodel import SQLModel
+
 from nexusx.loader.registry import ErManager, RelationshipInfo
 from nexusx.voyager.render import DiagramRenderer
 from nexusx.voyager.type import (
@@ -138,6 +140,10 @@ class ErDiagramDotBuilder:
             # Extract fields from model_fields
             fields = self._get_entity_fields(entity_kls)
             queries, mutations = _discover_methods(entity_kls)
+            # Virtual entity = plain BaseModel, not a SQLModel subclass.
+            # Signals DiagramRenderer to apply Contract 3 visual distinction
+            # (yellow fill, «virtual» stereotype, cluster_virtual grouping).
+            is_virtual = not (isinstance(entity_kls, type) and issubclass(entity_kls, SQLModel))
 
             self.node_set[full_name] = SchemaNode(
                 id=full_name,
@@ -146,6 +152,7 @@ class ErDiagramDotBuilder:
                 fields=fields,
                 queries=queries,
                 mutations=mutations,
+                is_virtual=is_virtual,
             )
         return full_name
 

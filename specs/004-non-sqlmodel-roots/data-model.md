@@ -175,13 +175,38 @@ Edges between virtual and SQLModel entities are drawn with the same arrow style 
 
 ```python
 @dataclass
+class EntityInfo:
+    name: str
+    table_name: str          # "" for virtual entities (no underlying table)
+    fields: list[str]
+    fk_fields: list[str]
+    relationships: list[RelationInfo] = field(default_factory=list)
+    is_virtual: bool = False  # NEW — True for plain BaseModel entities
+
+@dataclass
 class ErDiagram:
-    entities: list[type[SQLModel]]            # existing
-    virtual_entities: list[type[BaseModel]]   # NEW — populated from ErManager._registry
-    relationships: list[RelationshipEdge]     # existing — may now reference virtual endpoints
+    entities: list[EntityInfo]               # unified — both SQLModel and virtual
+    # virtual_entities: list[...]            # NOT a separate field — see note below
 ```
 
-The `relationships` list is unified: edges between two SQLModel entities, virtual-to-SQLModel, SQLModel-to-virtual, and virtual-to-virtual all live in the same list, distinguished only by their endpoint types.
+**Design decision (deviation from original plan)**: The original plan called for a
+separate `virtual_entities: list[type[BaseModel]]` field. The implementation instead
+keeps a **single unified** `entities` list and distinguishes virtual entries via the
+`EntityInfo.is_virtual` flag (and the `table_name == ""` invariant). Reasons:
+
+- All downstream consumers (`DiagramRenderer`, `to_mermaid`, edge emission) iterate
+  a single list and just check `is_virtual` to apply visual styling. Splitting into
+  two lists would force every consumer to zip them back together.
+- `ErDiagram.from_sqlmodel()` (existing API) returns SQLModel-only diagrams; it sets
+  `is_virtual=False` on every entry. Adding a `virtual_entities=[]` field would change
+  the shape of every existing call site for no behavioral gain.
+- Voyager rendering (`voyager/er_diagram_dot.py`) reads `er_manager.get_all_entities()`
+  directly and never constructs an `ErDiagram`, so it wouldn't benefit from a separate
+  field anyway.
+
+The `relationships` list is unified: edges between two SQLModel entities,
+virtual-to-SQLModel, SQLModel-to-virtual, and virtual-to-virtual all live in the same
+list, distinguished only by their endpoint types.
 
 ## Test fixtures shape
 
