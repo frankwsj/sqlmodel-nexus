@@ -494,6 +494,30 @@ class TestVirtualEntityInvariants:
         result = await Resolver().resolve(Plain(name="x"))
         assert result.greeting == "hi x"
 
+    async def test_unregistered_basemodel_with_relationships_raises(self):
+        """Edge Case B (with __relationships__): spec requires a clear error
+        pointing at the registration API — no silent auto-load skip."""
+        class _SneakyRoot(BaseModel):
+            oid: str
+            name: str
+            agents: list[AgentDTO] = []
+
+            __relationships__ = [
+                Relationship(
+                    fk="oid",
+                    target=list[AgentDTO],
+                    name="agents",
+                    loader=_load_agents_by_oid,
+                ),
+            ]
+
+        er = _make_er()
+        # Intentionally NOT calling er.add_virtual_entities([_SneakyRoot]).
+        resolver = er.create_resolver()()
+
+        with pytest.raises(RuntimeError, match="add_virtual_entities"):
+            await resolver.resolve(_SneakyRoot(oid="user-1", name="Alice"))
+
 
 class TestUnifiedSourceResolution:
     """FR-017 — the ``_resolve_source`` helper backing ``_get_loader`` and

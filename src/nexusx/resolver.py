@@ -467,14 +467,27 @@ class Resolver:
            fallback: the ``node_type`` itself is in ``_registry`` as its
            own source.
 
-        Returns ``None`` when neither strategy matches (no relationships
-        to look up).
+        Returns ``None`` when neither strategy matches AND ``node_type``
+        declares no ``__relationships__`` (no auto-load expected, no error).
+        Raises ``RuntimeError`` when ``node_type`` declares
+        ``__relationships__`` but is not registered in any ErManager —
+        spec Edge Case B requires a clear error pointing at the
+        registration API rather than silent skip.
         """
+        from nexusx.relationship import get_custom_relationships
         from nexusx.subset import get_subset_source
 
         source = get_subset_source(node_type)
-        if source is None and self._registry is not None and self._registry.has_entity(node_type):
-            source = node_type
+        if source is None and self._registry is not None:
+            if self._registry.has_entity(node_type):
+                source = node_type
+            elif get_custom_relationships(node_type):
+                raise RuntimeError(
+                    f"{node_type.__name__} declares __relationships__ but is "
+                    f"not registered with ErManager. Call "
+                    f"er.add_virtual_entities([{node_type.__name__}]) before "
+                    f"er.create_resolver()."
+                )
         return source
 
     def _get_loader(
@@ -706,16 +719,20 @@ class Resolver:
 
     @classmethod
     def _orm_to_dto(cls, orm_instance: Any, dto_cls: type[BaseModel]) -> BaseModel:
-        """Convert a SQLModel ORM instance to a DefineSubset DTO.
+        """Project an arbitrary instance onto a DefineSubset DTO.
 
-        Invoked only when the DefineSubset source is a SQLModel (an ORM row
-        exists to convert). BaseModel sources — registered via
-        ``ErManager.add_virtual_entities()`` or used directly — bypass this
-        function entirely; the user constructs DTO instances from kwargs /
-        ``model_validate`` and the runtime never needs the ORM→DTO path.
-        The function body is type-agnostic (``getattr`` over subset fields)
-        and would technically work on BaseModel instances too, but no call
-        site passes one.
+        Called from ``_batch_auto_load`` when a relationship loader returns
+        something that is NOT already an instance of the field's declared
+        DTO type — typically a SQLModel row, but the function is type-
+        agnostic (``getattr`` over ``__subset_fields__``) and handles any
+        source whose attributes line up with the DTO's subset fields. When
+        the loader already returns ``dto_cls`` instances, the caller skips
+        this function via the ``isinstance(r, dto_cls)`` short-circuit in
+        ``_batch_auto_load``.
+
+        The historical ``_orm_to_dto`` name comes from the SQLModel-row use
+        case; a rename to ``_source_to_dto`` is tracked as optional polish
+        in research.md R8 and is intentionally NOT done here.
         """
         subset_fields = cls._dto_fields_cache.get(dto_cls)
         if subset_fields is None and dto_cls not in cls._dto_fields_cache:
