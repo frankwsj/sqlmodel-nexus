@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import typing
 
-from sqlmodel import SQLModel
-
 from nexusx.loader.registry import ErManager, RelationshipInfo
+from nexusx.relationship import is_virtual_entity
 from nexusx.voyager.render import DiagramRenderer
 from nexusx.voyager.type import (
     PK,
@@ -143,7 +142,7 @@ class ErDiagramDotBuilder:
             # Virtual entity = plain BaseModel, not a SQLModel subclass.
             # Signals DiagramRenderer to apply Contract 3 visual distinction
             # (yellow fill, «virtual» stereotype, cluster_virtual grouping).
-            is_virtual = not (isinstance(entity_kls, type) and issubclass(entity_kls, SQLModel))
+            is_virtual = is_virtual_entity(entity_kls)
 
             self.node_set[full_name] = SchemaNode(
                 id=full_name,

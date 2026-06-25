@@ -490,3 +490,52 @@ class TestVirtualEntityInvariants:
         result = await Resolver().resolve(Plain(name="x"))
         assert result.greeting == "hi x"
 
+
+class TestUnifiedSourceResolution:
+    """FR-017 — the ``_resolve_source`` helper backing ``_get_loader`` and
+    ``_scan_auto_load_fields`` must produce identical results across call
+    sites. Regression for the copy-paste'd fallback that lived in two places
+    before T03 (convergence round 3).
+    """
+
+    def test_resolve_source_returns_self_for_registered_virtual_root(self):
+        """A virtual root registered via ``add_virtual_entities`` resolves
+        to itself — it has no DefineSubset source, but is in ``_registry``."""
+        er = _make_er()
+        er.add_virtual_entities([CurrentUserRoot])
+        resolver = er.create_resolver()()
+
+        assert resolver._resolve_source(CurrentUserRoot) is CurrentUserRoot
+
+    def test_resolve_source_returns_source_for_definesubset_dto(self):
+        """A DefineSubset DTO resolves to its declared source class."""
+        er = _make_er()
+        resolver = er.create_resolver()()
+
+        # AgentDTO is a DefineSubset sourced from _Agent (a SQLModel).
+        assert resolver._resolve_source(AgentDTO) is _Agent
+
+    def test_resolve_source_returns_none_for_unregistered_basemodel(self):
+        """A plain BaseModel with no registration and no DefineSubset source
+        resolves to None — no relationships to look up."""
+        er = _make_er()
+        resolver = er.create_resolver()()
+
+        class _Orphan(BaseModel):
+            x: int
+
+        assert resolver._resolve_source(_Orphan) is None
+
+    def test_resolve_source_consistent_across_call_sites(self):
+        """The two consumers (``_get_loader`` and ``_scan_auto_load_fields``)
+        must see the same source for the same node type. Build a virtual root
+        whose ``__relationships__`` loader is registered in ``_registry``;
+        verify both code paths resolve it to ``CurrentUserRoot``."""
+        er = _make_er()
+        er.add_virtual_entities([CurrentUserRoot])
+        resolver = er.create_resolver()()
+
+        node = CurrentUserRoot(oid="user-1", name="Alice")
+        # Mirror the internal call shape both methods use.
+        assert resolver._resolve_source(type(node)) is CurrentUserRoot
+

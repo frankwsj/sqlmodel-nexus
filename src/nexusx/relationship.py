@@ -29,7 +29,23 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, get_args, get_origin
 
+from pydantic import BaseModel
+from sqlmodel import SQLModel
+
 RELATIONSHIPS_ATTR = "__relationships__"
+
+
+def is_virtual_entity(cls: Any) -> bool:
+    """True if ``cls`` is a plain ``pydantic.BaseModel`` subclass that is NOT
+    a SQLModel.
+
+    Used by ER diagram builders and the DOT renderer to decide which nodes
+    receive the Contract 3 visual-distinction treatment (yellow fill,
+    ``«virtual»`` stereotype, ``cluster_virtual`` grouping). A single
+    canonical definition here avoids drift between ``er_diagram.py`` and
+    ``voyager/er_diagram_dot.py``.
+    """
+    return isinstance(cls, type) and issubclass(cls, BaseModel) and not issubclass(cls, SQLModel)
 
 
 @dataclass

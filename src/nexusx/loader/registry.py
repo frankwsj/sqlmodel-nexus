@@ -469,8 +469,13 @@ class ErManager:
                 "\n".join(skipped),
             )
 
-    def get_relationships(self, entity: type[SQLModel]) -> dict[str, RelationshipInfo]:
-        """Get all registered relationships for an entity."""
+    def get_relationships(self, entity: type[BaseModel]) -> dict[str, RelationshipInfo]:
+        """Get all registered relationships for an entity.
+
+        Accepts any registered class — SQLModel (registered via ``__init__``)
+        or plain BaseModel (registered via ``add_virtual_entities()``).
+        Returns ``{}`` for unknown entities.
+        """
         return self._registry.get(entity, {})
 
     def has_entity(self, entity: type) -> bool:
@@ -484,8 +489,8 @@ class ErManager:
         """
         return entity in self._registry
 
-    def get_all_entities(self) -> list[type[SQLModel]]:
-        """Get all registered entity classes."""
+    def get_all_entities(self) -> list[type[BaseModel]]:
+        """Get all registered entity classes (SQLModel + plain BaseModel)."""
         return list(self._registry.keys())
 
     def get_all_relationships(self) -> dict[type[SQLModel], dict[str, RelationshipInfo]]:

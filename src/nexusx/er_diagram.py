@@ -24,6 +24,8 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import RelationshipProperty
 from sqlmodel import SQLModel
 
+from nexusx.relationship import is_virtual_entity
+
 
 class RelationType(str, Enum):
     MANYTOONE = "MANYTOONE"
@@ -70,10 +72,28 @@ class ErDiagram:
 
         Args:
             entities: List of SQLModel entity classes (with table=True).
+                Every entry MUST be a SQLModel subclass. For projects that
+                mix SQLModel entities with plain BaseModel virtual roots
+                (registered via ``ErManager.add_virtual_entities()``), use
+                ``ErDiagram.from_er_manager(er)`` instead — it reads from
+                the ErManager registry and handles both uniformly.
+
+        Raises:
+            TypeError: If any entry is not a SQLModel subclass. Pre-feature
+                code that passed BaseModel classes here would crash later
+                inside ``sa_inspect()`` with ``NoInspectionAvailable`` —
+                the guard catches the mismatch up front.
 
         Returns:
             ErDiagram with entity and relationship information.
         """
+        for entity in entities:
+            if not (isinstance(entity, type) and issubclass(entity, SQLModel)):
+                raise TypeError(
+                    f"ErDiagram.from_sqlmodel() accepts only SQLModel classes; "
+                    f"got {entity!r}. For mixed SQLModel + BaseModel entity "
+                    f"sets, use ErDiagram.from_er_manager(er)."
+                )
         return cls._build([e for e in entities], sqlmodel_only=True)
 
     @classmethod
@@ -161,7 +181,7 @@ class ErDiagram:
                 table_name=table_name,
                 fields=scalar_fields,
                 fk_fields=fk_fields,
-                is_virtual=not is_sqlmodel,
+                is_virtual=is_virtual_entity(entity),
             )
             entity_map[entity] = entity_info
 
@@ -252,8 +272,6 @@ class ErDiagram:
         # Entity definitions
         for entity in self.entities:
             lines.append(f"    {entity.name} {{")
-            if entity.is_virtual:
-                lines.append("        %% virtual non-SQLModel root")
             for fname in entity.fields:
                 lines.append(f"        {fname}")
             lines.append("    }")
