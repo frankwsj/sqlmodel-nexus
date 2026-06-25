@@ -105,6 +105,29 @@ def _get_fk_field_names(entity: type[SQLModel]) -> list[str]:
     return fk_names
 
 
+def _get_relationship_fk_field_names(entity: type) -> list[str]:
+    """Get fk field names declared via ``__relationships__`` on the source.
+
+    Plain BaseModel sources have no SQLAlchemy metadata, so the only signal
+    that a field is used as a DataLoader key is the user writing
+    ``Relationship(fk="<field-name>", ...)`` on the source class. This reads
+    those declarations — works uniformly for SQLModel and BaseModel sources.
+
+    De-duplicates; order matches first declaration on the class.
+    """
+    from nexusx.relationship import get_custom_relationships
+
+    seen: set[str] = set()
+    names: list[str] = []
+    for rel in get_custom_relationships(entity):
+        fk = getattr(rel, "fk", None)
+        if not fk or fk in seen:
+            continue
+        seen.add(fk)
+        names.append(fk)
+    return names
+
+
 def _get_sqlmodel_scalar_fields(entity: type[SQLModel]) -> dict[str, FieldInfo]:
     """Get only scalar fields from a SQLModel entity (exclude relationships and FK fields)."""
     relationship_names = _get_relationship_names(entity)
@@ -571,6 +594,23 @@ class SubsetMeta(type):
         # FK fields in user_omit are skipped — validation later checks for conflicts.
         fk_fields = _get_fk_field_names(entity_kls)
         for fk in fk_fields:
+            if fk in user_omit:
+                continue
+            if fk not in existing_set:
+                subset_fields.append(fk)
+                existing_set.add(fk)
+                auto_excluded.add(fk)
+
+        # Auto-include fk fields declared via __relationships__ on the source.
+        # This is the BaseModel-source equivalent of the SQLModel FK auto-include
+        # above: plain BaseModel classes have no SQLAlchemy metadata, so the only
+        # signal that "field X is used as a DataLoader key" is the user writing
+        # ``Relationship(fk="X", ...)`` on the source. Without this auto-include,
+        # a DTO that excludes ``X`` silently breaks the relationship load — the
+        # resolver reads ``getattr(dto, "X", None)`` → None → loader never runs.
+        # See tests/test_definesubset_basemodel.py::TestBaseModelSourceFkAutoInclude.
+        rel_fk_fields = _get_relationship_fk_field_names(entity_kls)
+        for fk in rel_fk_fields:
             if fk in user_omit:
                 continue
             if fk not in existing_set:

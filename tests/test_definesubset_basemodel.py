@@ -313,3 +313,136 @@ class TestCustomRelationshipAutoConversion:
             "owner_oid was excluded via __subset__ but is still accessible — "
             "projection leaked."
         )
+
+
+# ──────────────────────────────────────────────────────────
+# BaseModel source + __relationships__ fk auto-include
+# ──────────────────────────────────────────────────────────
+
+
+class _BMStub(SQLModel, table=True):
+    """ErManager requires ≥1 SQLModel entity in __init__."""
+    __tablename__ = "bm_fk_stub"
+
+    id: int | None = Field(default=None, primary_key=True)
+
+
+class _BMTarget(BaseModel):
+    """Plain BaseModel relationship target."""
+    target_id: str
+    payload: str
+
+
+async def _bm_target_loader(keys: list[str]) -> list[list[_BMTarget]]:
+    """In-memory loader keyed by source.key."""
+    db = {
+        "k1": [_BMTarget(target_id="t1", payload="P1"),
+               _BMTarget(target_id="t2", payload="P2")],
+        "k2": [_BMTarget(target_id="t3", payload="P3")],
+    }
+    return [db.get(k, []) for k in keys]
+
+
+class _BMSource(BaseModel):
+    """Plain BaseModel source with a relationship that uses ``key`` as fk."""
+    key: str
+    name: str
+    items: list[_BMTarget] = []
+
+    __relationships__ = [
+        Relationship(
+            fk="key",
+            target=list[_BMTarget],
+            name="items",
+            loader=_bm_target_loader,
+        ),
+    ]
+
+
+class TestBaseModelSourceFkAutoInclude:
+    """Plain BaseModel sources have no SQLAlchemy metadata, so the auto-include
+    of PK/FK fields (which works for SQLModel) cannot fire. The framework
+    must therefore read fk field names from ``__relationships__`` declarations
+    on the source and auto-include them in DTO ``model_fields``.
+
+    Without this, a DTO that excludes the fk field silently breaks the
+    relationship load — ``getattr(dto, fk, None)`` returns None, the loader
+    is never called, and the field stays empty. No error is raised.
+    """
+
+    def test_fk_field_auto_included_in_model_fields(self):
+        """DTO that excludes ``key`` from ``__subset__`` still has it
+        in ``model_fields`` because the source declares ``Relationship(
+        fk="key", ...)``."""
+        class _SourceDTO(DefineSubset):
+            __subset__ = (_BMSource, ("name",))   # 'key' intentionally excluded
+            items: list[_BMTarget] = []
+
+        assert "key" in _SourceDTO.model_fields, (
+            "fk field declared via __relationships__ must be auto-included"
+        )
+        assert "key" in _SourceDTO.__subset_fields__, (
+            "Auto-included fk should also appear in __subset_fields__"
+        )
+
+    def test_fk_field_excluded_from_model_dump(self):
+        """The auto-included fk is tracked in ``__subset_auto_excluded__``
+        so it does not leak into API responses via ``model_dump()``.
+        """
+        class _SourceDTO(DefineSubset):
+            __subset__ = (_BMSource, ("name",))
+            items: list[_BMTarget] = []
+
+        assert "key" in _SourceDTO.__subset_auto_excluded__
+        dto = _SourceDTO(name="Alice", key="k1")
+        dumped = dto.model_dump()
+        assert "key" not in dumped, "Auto-included fk must not appear in dump"
+        assert dumped["name"] == "Alice"
+
+    def test_user_listed_fk_is_not_auto_excluded(self):
+        """If the user explicitly lists the fk in ``__subset__``, it's their
+        choice — do NOT auto-exclude from dump. Mirrors SQLModel PK behavior.
+        """
+        class _SourceDTO(DefineSubset):
+            __subset__ = (_BMSource, ("key", "name"))   # key explicitly listed
+            items: list[_BMTarget] = []
+
+        assert "key" not in _SourceDTO.__subset_auto_excluded__
+        dto = _SourceDTO(name="Alice", key="k1")
+        assert "key" in dto.model_dump()
+
+    def test_user_omitted_fk_is_respected(self):
+        """If the user uses ``SubsetConfig(omit_fields=["key"])`` to drop the
+        fk entirely, the framework does not re-add it.
+        """
+        from nexusx.subset import SubsetConfig
+
+        class _SourceDTO(DefineSubset):
+            __subset__ = SubsetConfig(
+                kls=_BMSource,
+                omit_fields=["key"],
+            )
+            # `items` field still declared, but key is gone — relationship
+            # load will silently fail. User's explicit choice.
+            items: list[_BMTarget] = []
+
+        assert "key" not in _SourceDTO.model_fields
+
+    async def test_relationship_loads_after_auto_include(self):
+        """End-to-end: a DTO that excludes ``key`` from ``__subset__`` still
+        loads the relationship at resolve time, because the auto-included
+        ``key`` is readable on the runtime instance.
+        """
+        class _SourceDTO(DefineSubset):
+            __subset__ = (_BMSource, ("name",))
+            items: list[_BMTarget] = []
+
+        er = ErManager(entities=[_BMStub], session_factory=lambda: None)
+        er.add_virtual_entities([_BMSource])
+        resolver = er.create_resolver()()
+
+        # DTO built with the (auto-included) key — user provides it via kwargs.
+        dto = _SourceDTO(name="Alice", key="k1")
+        result = await resolver.resolve(dto)
+
+        assert [t.target_id for t in result.items] == ["t1", "t2"]
