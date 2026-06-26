@@ -1,5 +1,124 @@
 # Changelog
 
+## 3.2.0
+
+### New Feature: 非 SQLModel 根对象（虚拟实体）— #87
+
+让普通 `pydantic.BaseModel` 子类作为 NexusX 解析与 ER 可视化的一等公民，无需继承 SQLModel 也无需底层表。三项能力同步落地。
+
+**动机：** 之前 `DefineSubset` 强制要求 SQLModel 源。FastAPI 端点用 `CurrentUser`（OIDC claims 组装）/ page wrapper / 第三方 SDK DTO 这类**非 ORM 根**做响应根时，只能 hack `_subset_registry`，没有官方路径。本特性把这一场景从 workaround 提升为 first-class。
+
+#### `ErManager.add_virtual_entities([...])` —— 虚拟实体注册
+
+注册普通 BaseModel 子类到 ER 图，作为 SQLModel 实体的对等参与者。注册后可：
+
+- 作为 `Resolver().resolve(root)` 的合法根
+- 声明 `__relationships__`（与 SQLModel 实体同一语法）
+- 参与 ExposeAs / SendTo / Collector 跨层数据流
+- 在 ER / Voyager 渲染为视觉区分的虚拟节点
+
+**生命周期约束：** 必须在第一次 `create_resolver()` **之前**调用——之后注册表冻结，再调抛 `RuntimeError`。ErManager 是 startup-once，所有实体注册（SQLModel 走 `__init__`，虚拟走 `add_virtual_entities`）都在请求服务前完成。
+
+**校验矩阵：**
+
+| 输入 | 结果 |
+|------|------|
+| `[A, B]`（普通 BaseModel，未注册过） | 两者都注册 |
+| `[]`（空列表） | 无操作 |
+| `[42]` / `[int]`（非类） | `TypeError` |
+| `[SomeRandomClass]`（非 BaseModel） | `TypeError` |
+| `[User]`（`SQLModel` 子类） | `TypeError`——SQLModel 必须走 `__init__` 的 `entities=` / `base=` |
+| `[A, A]`（同次或跨次重复） | `ValueError` |
+| 在 `create_resolver()` 之后调用 | `RuntimeError`（"registry is frozen"） |
+
+#### `DefineSubset.__subset__` 源拓宽到任意 BaseModel
+
+源从 `type[SQLModel]` 拓宽到 `type[BaseModel]`——SQLModel 与普通 BaseModel 均被接受。"subset" 的语义是 **schema 子集**（从 `model_fields` 选字段），与数据来源无关：SQLModel 源走 ORM 自动投递（`_orm_to_dto`），BaseModel 源由用户直接构造 DTO 实例，框架不参与。
+
+两个 API 正交：一个 BaseModel 类可以 (a) 只注册为虚拟实体、(b) 只作为 DefineSubset 源、(c) 两者都用、(d) 两者都不用。
+
+#### ER / Voyager 虚拟节点视觉区分
+
+混合 SQLModel + 虚拟实体的项目，ER 图不再崩溃；虚拟实体渲染为视觉上明确区分的节点（FR-009）：
+
+| 属性 | SQLModel 实体 | 虚拟实体 |
+|------|--------------|---------|
+| 形状 | `shape=plain`（HTML label）| `shape=plain`（同上）|
+| 表头底色 | 主题色（teal）| 浅黄 `#FFF9C4` |
+| Label | `{ClassName}` | `«virtual»\n{ClassName}` |
+| Cluster | 按模块路径 | 独立 `cluster_virtual`（虚线边框）|
+
+**为什么不用 `shape=note`：** 现有 renderer 对所有节点用 HTML label + `shape=plain`，给虚拟节点单独换 shape 会破坏 HTML 渲染。视觉区分改由 **填色 + 衍型标签 + 独立 cluster** 三个信号共同承载，黑白打印也可读。
+
+**两个入口：**
+
+- `ErDiagram.from_er_manager(er)` —— 数据 API，返回 `ErDiagram` 数据类，可调 `.to_mermaid()`
+- `ErDiagramDotBuilder(er).render_dot()` —— DOT 路径，Voyager 实际使用的入口
+
+零虚拟实体时 DOT 输出与 baseline 字节一致（虚拟 cluster 被完全省略）。
+
+#### Resolver 源解析统一 + Edge Case B 报错
+
+`_resolve_source()` 作为单一辅助函数，统一三种根的源查找逻辑：
+
+1. DefineSubset DTO → `_subset_registry` 拿源
+2. 虚拟实体（已注册 BaseModel）→ `_registry.has_entity()` 命中自身
+3. 未注册的 BaseModel → 看 `__relationships__`：有则抛 `RuntimeError` 指向 `add_virtual_entities`，无则返回 None 跳过 auto-load
+
+之前未注册的 BaseModel 即使声明了 `__relationships__` 也会被静默跳过，用户不知道为什么关系字段不加载。现在改成清晰报错（spec Edge Case B）。
+
+#### CUSTOM 关系 loader 输出自动投影到声明 DTO 类型
+
+CUSTOM 关系的 loader 返回值与字段声明的 DTO 类型不一致时（如字段 `list[AgentDTO]`，loader 返回 `_Agent` SQLModel 实例），Resolver 现在按 `isinstance(r, dto_cls)` 判断而非之前的 `isinstance(r, BaseModel)`——后者会把所有 BaseModel（包括 SQLModel 实体）当作"已转换"，静默跳过投影，导致字段实际持有错误的类型。`test_loader_output_converted_to_declared_dto_type` 锁定该修复。
+
+#### DefineSubset 自动包含 `__relationships__` fk 字段
+
+BaseModel 源没有 SQLAlchemy 元数据，FK 字段名只能从 `Relationship(fk="...")` 读取。`_resolve_subset_info` 现在扫源类的 `__relationships__` 自动把 fk 字段加进 DTO（`exclude=True`、`Optional`、`default=None`），与 SQLModel 源的 FK auto-include 对称。否则 DTO 排除 fk 字段时关系加载会静默失败（`getattr(dto, fk, None)` 返 None，loader 永不触发）。
+
+#### 迁移路径
+
+老 hack `_subset_registry[X] = Y` 改为：
+
+- Y 有 `__relationships__` 或需要 ER 可见 → `er.add_virtual_entities([Y])`
+- X 是 Y schema 的子集 → `class X(DefineSubset): __subset__ = (Y, ("fields",))`（Y 现在可以是 BaseModel）
+- X 就是 Y 自身 → 让 X 成为普通 BaseModel + `er.add_virtual_entities([X])`
+
+详见 `docs/guide/virtual_entities.md` 与 `docs/reference/migration.md`。
+
+### Spec 工件
+
+完整 speckit 工件位于 `specs/004-non-sqlmodel-roots/`：spec / plan / research / data-model / contracts / quickstart / tasks / checklists。
+
+### Changes
+
+- `src/nexusx/loader/registry.py`: 新增 `ErManager.add_virtual_entities()` / `has_entity()` / `frozen` 属性 / `_frozen` flag；`_registry` 类型拓宽为 `dict[type, ...]`；`create_resolver()` 顶部置 `_frozen = True`
+- `src/nexusx/subset.py`: `_resolve_subset_info` 源校验从 `issubclass(SQLModel)` 拓宽到 `issubclass(BaseModel)`；新增 `_get_relationship_fk_field_names()` 自动注入 BaseModel 源的 fk 字段；`_subset_registry` 类型拓宽为 `dict[type[BaseModel], type[BaseModel]]`
+- `src/nexusx/relationship.py`: `get_custom_relationships(entity)` 签名拓宽到任意 `type`；新增 `is_virtual_entity()` 规范 helper（er_diagram / voyager 共用，避免漂移）
+- `src/nexusx/resolver.py`: 新增 `_resolve_source()` 统一源解析（被 `_get_loader` 和 `_scan_auto_load_fields` 共用）；`_orm_to_dto` docstring 重写为"loader 输出投影"语义；`_batch_auto_load` CUSTOM 分支改用 `isinstance(r, dto_cls)`；Edge Case B `RuntimeError` 报错路径
+- `src/nexusx/er_diagram.py`: 新增 `from_er_manager()` 入口；`_build()` 按 `registry_relationships` flag 分叉关系数据源；`EntityInfo.is_virtual` 字段
+- `src/nexusx/voyager/er_diagram_dot.py`: `SchemaNode.is_virtual` 标记，通过 `is_virtual_entity()` 判定
+- `src/nexusx/voyager/render.py`: `render_schema_label` 虚拟节点黄底 + `«virtual»` 衍型；`render_dot` 把虚拟节点分组进 `cluster_virtual`
+- `src/nexusx/voyager/render_style.py`: `ColorScheme.virtual_fill` (`#FFF9C4`) / `virtual_cluster`
+- `src/nexusx/voyager/type.py`: `SchemaNode.is_virtual` 字段
+- `tests/test_virtual_entities.py`: Layer 1 API 契约 + Layer 2 能力对等 + Layer 3 不变量
+- `tests/test_definesubset_basemodel.py`: BaseModel 源子集化 + fk auto-include + 自定义关系自动投影
+- `tests/test_virtual_entities_er.py`: ER/Voyager 渲染 + 视觉区分信号 + 零虚拟 baseline 等价回归
+
+### Docs
+
+- 新增 `docs/guide/virtual_entities.md` + `.zh.md`：完整使用指南（API 契约、迁移、可视化规则）
+- `docs/api/api_core.md` + `.zh.md`：ErManager 方法表新增 `add_virtual_entities`，DefineSubset 段补 BaseModel 源 tip
+- `docs/reference/migration.md` + `.zh.md`：新增 `_subset_registry` → 官方 API 迁移表
+- `docs/reference/changelog.md` + `.zh.md`：本版本摘要
+- `docs/index.md` + `.zh.md`：guide 表格新增 Virtual Entities 行
+
+### 版本同步
+
+- `pyproject.toml`: 3.1.3 → 3.2.0
+- `uv.lock`: nexusx 3.1.3 → 3.2.0（**无镜像源引入**，仍指向 `pypi.org`，符合 CLAUDE.md 约定——本地用 `uv lock` 同步即可）
+
+---
+
 ## 3.1.3
 
 ### Bug Fix: 分页 `has_more` off-by-one（#86）
