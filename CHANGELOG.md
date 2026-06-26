@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.2.1
+
+### Bug Fix: `serialize_result` 改用 JSON 模式 + dict 递归序列化（#90）
+
+移植 pydantic-resolve v5.10.4 的同名修复。`use_case/serialization.py:serialize_result` 是 JSON-RPC（`jsonrpc.py:280`）和 CLI（`cli.py:83`）组装响应时唯一会走的序列化路径，但三个细节让它对 `UUID` / `datetime` / `Decimal` 这类非 JSON 原生类型完全失效——尤其是当 use case 方法返回**包含这些类型的 `dict` payload** 时：
+
+1. `BaseModel.model_dump()` 用默认 `mode="python"`，UUID / datetime / Decimal 仍然是 Python 对象。
+2. `dict` 直接 `return result` **不递归**，嵌套在 dict 里的 UUID / BaseModel 被原样泄露。
+3. 兜底 `return result`（任何带 `model_dump` 或其他类型）也绕开 JSON 转换。
+
+最终症状：调用方走到 `json.dumps(...)` 时抛 `TypeError: Object of type UUID is not JSON serializable`——错误指向 `json.dumps` 那一行而不是 `serialize_result`，定位困难。
+
+**修法：** 全部走 Pydantic 的 JSON 模式：
+- `model_dump(mode="json")` 替换两处 `model_dump()`
+- dict 改成 `{k: serialize_result(v) for k, v in result.items()}` 递归
+- 兜底改用 `TypeAdapter(type(result)).dump_python(result, mode="json")`
+
+完全对齐上游 commit `6ecf965`。
+
+**Changes：**
+- `src/nexusx/use_case/serialization.py`: 重写 `serialize_result`，4 处分支调整（BaseModel / dict 递归 / `model_dump` fall-through / 兜底 TypeAdapter）
+- `tests/test_use_case_serialization.py`: 新增 12 个测试——该函数**此前完全没有单元测试**。覆盖 UUID/datetime/Decimal 标量、嵌套 BaseModel、dict-with-UUID（修复核心回归点）、嵌套 dict 中的 UUID、dict 中的 BaseModel 值、端到端 `json.dumps(payload)` 不抛错、None/scalar passthrough
+
+---
+
 ## 3.2.0
 
 ### New Feature: 非 SQLModel 根对象（虚拟实体）— #87
