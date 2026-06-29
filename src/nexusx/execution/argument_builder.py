@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any, get_type_hints
 
 from graphql.utilities import value_from_ast_untyped
@@ -77,6 +77,10 @@ class ArgumentBuilder:
             target_type = self._converter.unwrap_optional(target_type)
         if target_type is datetime and isinstance(value, str):
             return self._parse_datetime(value)
+        if target_type is date and isinstance(value, str):
+            return date.fromisoformat(value)
+        if target_type is time and isinstance(value, str):
+            return time.fromisoformat(value)
 
         return value
 
