@@ -334,7 +334,7 @@ class TestCreateResolver:
         assert instance._registry is registry
 
     async def test_create_resolver_forwards_loader_instances(self):
-        """``loader_instances`` must flow through ``create_resolver()`` to the underlying Resolver."""
+        """`loader_instances` must flow through `create_resolver()` to Resolver."""
         from aiodataloader import DataLoader
 
         class StubLoader(DataLoader):

@@ -658,7 +658,10 @@ class TestQueryExecutorPagination:
 
         method = _get_bound_method(SprintQuery, "get_all")
         query_methods = {"sprints": (FixtureSprint, method)}
-        gql = "{ sprints { id name tasks { items { id title } pagination { total_count has_more } } } }"
+        gql = (
+            "{ sprints { id name tasks { items { id title } "
+            "pagination { total_count has_more } } } }"
+        )
         document, parsed = _parse(gql)
 
         result = await executor.execute_query(
@@ -689,7 +692,10 @@ class TestQueryExecutorPagination:
 
         method = _get_bound_method(SprintQuery, "get_all")
         query_methods = {"sprints": (FixtureSprint, method)}
-        gql = "{ sprints { id name tasks(limit: 1) { items { id title } pagination { total_count has_more } } } }"
+        gql = (
+            "{ sprints { id name tasks(limit: 1) { items { id title } "
+            "pagination { total_count has_more } } } }"
+        )
         document, parsed = _parse(gql)
 
         result = await executor.execute_query(

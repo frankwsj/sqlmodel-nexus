@@ -6,6 +6,11 @@ from pydantic import BaseModel
 from sqlmodel import Field, Relationship, SQLModel
 
 from nexusx.response_builder import (
+    _build_scalar_model,
+    _extract_entity_from_annotation,
+    _is_list_relationship,
+    _resolve_forward_reference,
+    _validate_and_dump,
     build_response_model,
     get_relation_entity,
     get_relationship_names,
@@ -144,16 +149,6 @@ class TestGetRelationEntity:
 # Additional coverage tests
 # ──────────────────────────────────────────────────────────
 
-from typing import Optional
-
-from nexusx.response_builder import (
-    _build_scalar_model,
-    _extract_entity_from_annotation,
-    _is_list_relationship,
-    _resolve_forward_reference,
-    _validate_and_dump,
-)
-
 
 class TestBuildResponseModelExtras:
     def test_unknown_relation_falls_back_to_any(self):
@@ -231,7 +226,7 @@ class TestResolveForwardReference:
 class TestExtractEntityFromAnnotation:
     def test_optional_entity(self):
         """Optional[Entity] should extract Entity."""
-        result = _extract_entity_from_annotation(Optional[RBUser])
+        result = _extract_entity_from_annotation(RBUser | None)
         assert result is RBUser
 
     def test_list_entity(self):

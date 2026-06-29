@@ -23,8 +23,7 @@ import time
 from statistics import mean, quantiles
 from typing import Optional
 
-USE_MYSQL = "--mysql" in sys.argv
-
+from pydantic import BaseModel as PydanticBaseModel
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, select
@@ -37,6 +36,8 @@ from nexusx import (
     SubsetConfig,
     build_dto_select,
 )
+
+USE_MYSQL = "--mysql" in sys.argv
 
 # ──────────────────────────────────────────────────────────
 # Models
@@ -141,8 +142,6 @@ class SprintDetail(DefineSubset):
 # Plain Pydantic DTOs (for fair comparison — same fields, no DefineSubset)
 # ──────────────────────────────────────────────────────────
 
-from pydantic import BaseModel as PydanticBaseModel
-
 
 class PUserSummary(PydanticBaseModel):
     id: int
@@ -236,7 +235,7 @@ async def seed_data(n_users: int, n_sprints: int, n_tasks_per_sprint: int):
 
         task_id = 0
         for sprint in sprints:
-            for j in range(n_tasks_per_sprint):
+            for _ in range(n_tasks_per_sprint):
                 owner = users[task_id % n_users]
                 task = Task(
                     title=f"Task_{task_id}",
@@ -590,8 +589,14 @@ def print_comparison(
     print(f"  {label}")
     print(f"  {'Method':<25s} {'Avg':>10s} {'P50':>10s} {'P95':>10s}")
     print(f"  {'─' * 58}")
-    print(f"  {'Pydantic DTO':<25s} {fmt_ms(pd_avg):>10s} {fmt_ms(pd_p50):>10s} {fmt_ms(pd_p95):>10s}")
-    print(f"  {'nexusx DefineSubset':<25s} {fmt_ms(nx_avg):>10s} {fmt_ms(nx_p50):>10s} {fmt_ms(nx_p95):>10s}")
+    print(
+        f"  {'Pydantic DTO':<25s} {fmt_ms(pd_avg):>10s} "
+        f"{fmt_ms(pd_p50):>10s} {fmt_ms(pd_p95):>10s}"
+    )
+    print(
+        f"  {'nexusx DefineSubset':<25s} {fmt_ms(nx_avg):>10s} "
+        f"{fmt_ms(nx_p50):>10s} {fmt_ms(nx_p95):>10s}"
+    )
     print(f"  {'  vs Pydantic':<25s} {sign_vs}{nx_vs_pd:.1f}%")
     print()
 
@@ -667,7 +672,10 @@ async def main():
 
     for scale_name, n_users, n_sprints, n_tasks_per_sprint in SCALES:
         total_tasks = n_sprints * n_tasks_per_sprint
-        print(f"  ── {scale_name} scale ({n_users} users, {n_sprints} sprints, {total_tasks} tasks) ──")
+        print(
+            f"  ── {scale_name} scale ({n_users} users, {n_sprints} sprints, "
+            f"{total_tasks} tasks) ──"
+        )
         print()
 
         # Reset globals for clean slate

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Optional
+from typing import Annotated
 
 import pytest
 from pydantic import BaseModel
@@ -647,7 +647,7 @@ class TestLoaderInstances:
     """
 
     async def test_loader_instances_pre_prime(self):
-        """US1: a primed key is returned from cache; the batch function only runs for unprimed keys."""
+        """US1: primed keys hit cache; batch runs only for unprimed keys."""
         from aiodataloader import DataLoader
 
         batch_calls: list[list[int]] = []
@@ -678,7 +678,7 @@ class TestLoaderInstances:
         assert batch_calls == [[7]]
 
     async def test_loader_instances_by_reference(self):
-        """US2: the supplied instance is used by reference; id() and constructor state are preserved."""
+        """US2: supplied loader instance stays by reference with state intact."""
         from aiodataloader import DataLoader
 
         class TaggedLoader(DataLoader):
@@ -765,7 +765,7 @@ class TestOrmToDto:
             name: str
             # Nullable column with a non-None default — common pattern for
             # "metric that defaults to 0 when missing".
-            score: Optional[int] = Field(default=0)
+            score: int | None = Field(default=0)
 
         class ScoreDTO(DefineSubset):
             __subset__ = (ScoreEntity, ("id", "name", "score"))
@@ -796,7 +796,7 @@ class TestOrmToDto:
         class ScoreEntity(SQLModel):
             id: int | None = Field(default=None, primary_key=True)
             name: str
-            score: Optional[int] = Field(default=0)
+            score: int | None = Field(default=0)
 
         class ScoreDTO(DefineSubset):
             __subset__ = (ScoreEntity, ("id", "name", "score"))
@@ -817,10 +817,11 @@ class TestOrmToDto:
         refs at class creation), but if someone re-adds similar logic
         they could mask real schema bugs (typos, missing imports).
         """
+        from types import SimpleNamespace
+
         from sqlmodel import Field, SQLModel
 
         from nexusx import DefineSubset
-        from types import SimpleNamespace
 
         class TypoEntity(SQLModel):
             id: int | None = Field(default=None, primary_key=True)
@@ -830,7 +831,8 @@ class TestOrmToDto:
             __subset__ = (TypoEntity, ("id", "name"))
             # Forward ref to a class that doesn't exist anywhere — simulates
             # a real-world typo or missing import.
-            child: "NonExistentClassXYZ | None" = None  # type: ignore[assignment]
+            __annotations__ = {"child": "NonExistentClassXYZ | None"}
+            child = None
 
         orm = SimpleNamespace(id=1, name="x")
         with pytest.raises(Exception, match="NonExistentClassXYZ"):
@@ -1576,7 +1578,7 @@ class TestTypingShapeTraversal:
 
         assert Resolver._extract_dto_cls_and_cardinality(MyDTO) == (MyDTO, False)
         assert Resolver._extract_dto_cls_and_cardinality(MyDTO | None) == (MyDTO, False)
-        assert Resolver._extract_dto_cls_and_cardinality(Optional[MyDTO]) == (MyDTO, False)
+        assert Resolver._extract_dto_cls_and_cardinality(MyDTO | None) == (MyDTO, False)
         assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO]) == (MyDTO, True)
         assert Resolver._extract_dto_cls_and_cardinality(list[MyDTO] | None) == (MyDTO, True)
         assert Resolver._extract_dto_cls_and_cardinality(Annotated[MyDTO, "x"]) == (MyDTO, False)

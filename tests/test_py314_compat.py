@@ -61,7 +61,9 @@ class TestPy314AnnotationsCompat:
             __subset__ = SubsetConfig(kls=_Tag, fields=["id", "name"])
 
         class ItemTagDTO(DefineSubset):
-            __subset__ = SubsetConfig(kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"])
+            __subset__ = SubsetConfig(
+                kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"]
+            )
             tag: TagBrief | None = None
 
         assert "tag" in ItemTagDTO.model_fields
@@ -74,7 +76,9 @@ class TestPy314AnnotationsCompat:
             __subset__ = SubsetConfig(kls=_Tag, fields=["id", "name"])
 
         class ItemTagDTO(DefineSubset):
-            __subset__ = SubsetConfig(kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"])
+            __subset__ = SubsetConfig(
+                kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"]
+            )
             tag: TagBrief | None = None
 
         class ItemDTO(DefineSubset):
@@ -102,7 +106,9 @@ class TestPy314AnnotationsCompat:
             __subset__ = SubsetConfig(kls=_Tag, fields=["id", "name"])
 
         class ItemTagDTO(DefineSubset):
-            __subset__ = SubsetConfig(kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"])
+            __subset__ = SubsetConfig(
+                kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"]
+            )
             tag: TagBrief | None = None
 
         class ItemDTO(DefineSubset):
@@ -122,7 +128,9 @@ class TestPy314AnnotationsCompat:
             __subset__ = SubsetConfig(kls=_Tag, fields=["id", "name"])
 
         class ItemTagDTO(DefineSubset):
-            __subset__ = SubsetConfig(kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"])
+            __subset__ = SubsetConfig(
+                kls=_ItemTag, fields=["id", "tag_id"], excluded_fields=["tag_id"]
+            )
             tag: TagBrief | None = None
 
         link = _ItemTag(id=1, item_id=10, tag_id=20)

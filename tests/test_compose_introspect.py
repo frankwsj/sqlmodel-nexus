@@ -218,7 +218,10 @@ class TestCoerceStrictEndToEnd:
         # GraphQL object literals as scalar args may or may not parse cleanly
         # depending on QueryParser — accept either success or a clean error.
         if result["errors"]:
-            assert "Failed to coerce" in result["errors"][0]["message"] or "UserService" in result["errors"][0]["message"]
+            assert (
+                "Failed to coerce" in result["errors"][0]["message"]
+                or "UserService" in result["errors"][0]["message"]
+            )
         else:
             assert "Zed" in result["data"]["_CoercionService"]["by_model"]
 

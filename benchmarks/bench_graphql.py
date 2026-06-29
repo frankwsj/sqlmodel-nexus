@@ -21,8 +21,6 @@ import time
 from statistics import mean, quantiles
 from typing import Optional
 
-USE_MYSQL = "--mysql" in sys.argv
-
 from graphql import parse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, Relationship, SQLModel, select
@@ -31,6 +29,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from nexusx.execution.query_executor import QueryExecutor
 from nexusx.loader.registry import ErManager
 from nexusx.query_parser import QueryParser
+
+USE_MYSQL = "--mysql" in sys.argv
 
 # ──────────────────────────────────────────────────────────
 # Models — blog-style with User → posts + comments

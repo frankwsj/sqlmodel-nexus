@@ -7,7 +7,6 @@ the unwrapped `list[str]`, which doesn't handle list types — falling back to S
 
 See: sdl_generator._python_type_to_graphql lines 20-48
 """
-from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -104,7 +103,7 @@ class TestOptionalListParameterBug:
 
     def test_optional_list_str_produces_list_string(self):
         """Optional[list[str]] should convert to [String!], not String."""
-        result = _python_type_to_graphql(Optional[list[str]], self.converter)
+        result = _python_type_to_graphql(list[str] | None, self.converter)
         assert result == "[String!]", f"Expected '[String!]' but got '{result}'"
 
     def test_list_int_none_produces_list_int(self):

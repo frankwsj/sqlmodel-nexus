@@ -30,7 +30,6 @@ the fix touches the three places above. Pattern mirrors
 from __future__ import annotations
 
 from datetime import date, time
-from typing import Optional
 
 import pytest
 from graphql import parse
@@ -40,7 +39,6 @@ from nexusx.execution.argument_builder import ArgumentBuilder
 from nexusx.introspection import IntrospectionGenerator
 from nexusx.sdl_generator import SDLGenerator
 from nexusx.type_converter import TypeConverter
-
 
 # ── 1. TypeConverter scalar map ───────────────────────────────────────
 
@@ -72,14 +70,13 @@ class _EventForSdl(SQLModel, table=False):
     id: int | None = Field(default=None, primary_key=True)
     when: date = Field(description="event date")
     start_time: time = Field(description="start time")
-    optional_when: Optional[date] = Field(default=None, description="optional date")
+    optional_when: date | None = Field(default=None, description="optional date")
 
 
 class TestSDLDateAndTime:
     """SDL for date/time fields should emit ``Date`` / ``Time``, not ``String``."""
 
     def _generate(self) -> str:
-        converter = TypeConverter(entity_names={"_EventForSdl"})
         sdl = SDLGenerator([_EventForSdl], query_description=None, mutation_description=None)
         # SDLGenerator gets its own converter internally; pass via the public generate path.
         return sdl.generate(loader_registry=None)
@@ -113,7 +110,12 @@ class TestArgumentBuilderDateAndTime:
     a native ``datetime.date`` / ``datetime.time`` object, not a string.
     """
 
-    def _build_args(self, query: str, hint_for: dict[str, type], variables: dict | None = None) -> dict:
+    def _build_args(
+        self,
+        query: str,
+        hint_for: dict[str, type],
+        variables: dict | None = None,
+    ) -> dict:
         """Build a fake method whose signature carries the given type hints,
         then run ArgumentBuilder against the parsed query.
         """
@@ -125,7 +127,11 @@ class TestArgumentBuilderDateAndTime:
 
         # Construct the function via exec so annotations land properly.
         ns: dict = {}
-        func_src = "async def get(cls, " + ", ".join(f"{p}: object" for p in params[1:]) + "):\n    return None\n"
+        func_src = (
+            "async def get(cls, "
+            + ", ".join(f"{p}: object" for p in params[1:])
+            + "):\n    return None\n"
+        )
         exec(func_src, ns)
         method = ns["get"]
         method.__annotations__ = dict(hint_for)
@@ -170,7 +176,7 @@ class TestArgumentBuilderDateAndTime:
     def test_date_variable_reaches_method_as_date(self) -> None:
         args = self._build_args(
             "query($when: Date) { holderGet(when: $when) { id } }",
-            {"when": Optional[date]},
+            {"when": date | None},
             variables={"when": "2026-06-29"},
         )
         assert args["when"] == date(2026, 6, 29)
@@ -179,7 +185,7 @@ class TestArgumentBuilderDateAndTime:
     def test_time_variable_reaches_method_as_time(self) -> None:
         args = self._build_args(
             "query($t: Time) { holderGet(start_time: $t) { id } }",
-            {"start_time": Optional[time]},
+            {"start_time": time | None},
             variables={"t": "19:30"},
         )
         assert args["start_time"] == time(19, 30)
@@ -280,7 +286,8 @@ async def test_mutation_with_date_and_time_persists_to_db():
         f"ArgumentBuilder returned when as {type(args.get('when')).__name__}, expected date"
     )
     assert isinstance(args.get("start_time"), time), (
-        f"ArgumentBuilder returned start_time as {type(args.get('start_time')).__name__}, expected time"
+        f"ArgumentBuilder returned start_time as "
+        f"{type(args.get('start_time')).__name__}, expected time"
     )
 
     # And the insert must actually succeed (no SQLite TypeError).
