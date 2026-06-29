@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.2.2
+
+### Bug Fix: 自引用 / 互引用 DTO 不再让 schema 构建栈溢出（#91）
+
+`ComposeTypeMapper._register_object` / `_register_input_object` 之前在**遍历完所有字段之后**才把 `TypeInfo` 写入 `_registry` 和 `_by_python_id` memo。当 DTO 出现自引用（`parent: Self | None`、`children: list[Self]`）或互引用（`A.b: B` + `B.a: A`）时，递归走到自引用字段时 memo 还没写入，无法短路， recursion 一路到底直到 `RecursionError`——`build_compose_schema` 直接崩溃，应用启动失败。同样的形态曾在 note-tool 的 `TagTreeItem` 启动时踩到。
+
+**修法：** 遍历字段**之前**先往两个 memo 里写一个 `fields=()` 的 stub `TypeInfo`，让自/互引用的重入命中 memo 提前返回 name。字段遍历完成后用 `dataclasses.replace(stub, fields=...)` 把真实字段填回去——`TypeInfo` 是 frozen dataclass，所以必须 replace 而非原地改。`TypeRef` 是 name-based，下游消费者看到的始终是 finalize 之后的版本。
+
+**Changes：**
+- `src/nexusx/use_case/compose_type_mapper.py`: `_register_object` 和 `_register_input_object` 改为先 stub 后 finalize，新增 `import dataclasses`
+- 回归测试：自引用（`TreeNode`）、互引用（`NodeA` / `NodeB`）、`INPUT_OBJECT` 自引用（`TreeFilter.children: list[Self]`）三个场景
+
+---
+
+### Bug Fix: SQLModel `date` / `time` 字段在 GraphQL 端到端原生支持（#92）
+
+SQLModel 实体声明 `when: date` / `start_time: time` 时，整条 GraphQL 链路把它当作字符串处理——SDL 误报成 `String!`，突变调用时字符串原样穿透到 SQLModel 触发 `TypeError: SQLite Date type only accepts Python date objects`，GraphiQL introspection 里 `Date` / `Time` scalar 压根不出现，客户端无从知晓。child-calendar 项目踩到这个坑。三处局部修复，让 `date` / `time` 走与既有 `datetime` 一致的处理路径。
+
+**修法：**
+- `TypeConverter.SCALAR_TYPE_MAP` 增加 `date → "Date"`、`time → "Time"`——SDL 和 introspection 通过 `get_scalar_type_name(...) or "String"` 自动停止回落到 `String`，`sdl_generator` 无需改动
+- `ArgumentBuilder._convert_scalar_value` 增加 `date` / `time` 分支，用标准库 `date.fromisoformat` / `time.fromisoformat` 把 GraphQL 字符串字面量（含变量）parse 回 Python 原生对象
+- `IntrospectionGenerator._build_scalar_types` 的硬编码 scalar 列表加入 `"Date"` / `"Time"`，让 GraphiQL 能 discover
+
+**Changes：**
+- `src/nexusx/type_converter.py`: `SCALAR_TYPE_MAP` 加 2 项
+- `src/nexusx/execution/argument_builder.py`: `_convert_scalar_value` 加 `date` / `time` 两个 `isinstance(value, str)` 分支
+- `src/nexusx/introspection.py`: `_build_scalar_types` 的 scalars 列表加 `"Date"` / `"Time"`
+- `tests/test_date_time_arguments.py`: 新增 16 个测试，覆盖 TypeConverter 标量映射、SDL 发射、ArgumentBuilder 字符串→对象转换、Introspection 标量列表、端到端 SQLite 落库五层
+
+---
+
 ## 3.2.1
 
 ### Bug Fix: `serialize_result` 改用 JSON 模式 + dict 递归序列化（#90）
