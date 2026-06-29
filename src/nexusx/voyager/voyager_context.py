@@ -5,6 +5,7 @@ detection and pydantic-resolve dependencies.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from nexusx.loader.registry import ErManager
@@ -40,7 +41,6 @@ class VoyagerContext:
         version: str = "1.0.0",
     ):
         self.services = services
-        self._allowed_modules: set[str] = {svc.__module__ for svc in services}
         self.er_manager = er_manager
         self.name = name
         self.module_color = module_color or {}
@@ -243,18 +243,27 @@ class VoyagerContext:
                 if method is not None:
                     return method
 
-        # Fall back to module.ClassName import — restricted to service modules
+        # Fall back to module.ClassName import.
+        #
+        # Voyager/ER UI uses fully-qualified names from the analyzed graph, which
+        # may point at DTO/entity/loader classes living outside service modules
+        # (for example ``src.models.WorkspaceKnowledgeBinding``). Restricting
+        # resolution to service modules makes those valid graph nodes fail with
+        # a misleading "Invalid schema name format." even though the name is
+        # structurally correct and already imported by the running app.
+        #
+        # Prefer already-loaded modules for safety and only import as a fallback.
         components = schema_name.split(".")
         if len(components) < 2:
             return None
         module_name = ".".join(components[:-1])
-        if not any(
-            module_name == m or module_name.startswith(m + ".")
-            for m in self._allowed_modules
-        ):
-            return None
         class_name = components[-1]
-        mod = __import__(module_name, fromlist=[class_name])
+        mod = sys.modules.get(module_name)
+        if mod is None:
+            try:
+                mod = __import__(module_name, fromlist=[class_name])
+            except ImportError:
+                return None
         return getattr(mod, class_name)
 
     def get_source_code(self, schema_name: str) -> dict:

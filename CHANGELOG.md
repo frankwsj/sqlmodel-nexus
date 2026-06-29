@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.2.3
+
+### Bug Fix: Voyager 源码定位支持非 service module 的全限定类名
+
+`VoyagerContext._resolve_object` 之前在处理 `module.ClassName` 形态的 schema 名时，会先把模块名限制在 `services` 所在 module 范围内。Voyager / ER UI 实际传回的节点名却可能是图分析阶段收集到的**任意已加载类型**，例如 DTO、entity、loader 或测试里的辅助 schema；这些类型经常并不定义在 service module 下。结果是像 `tests.test_voyager_security._LocalSchema` 这类结构完全合法、而且运行时已加载的名称，会被误判，进一步在 `get_source_code` / `get_vscode_link` 上表现为“格式非法”或无法跳转。
+
+**修法：** 去掉 service-module 白名单限制，优先从 `sys.modules` 解析已经加载的模块，仅在未加载时再尝试导入；导入失败则安全返回 `None`。这样既保留了原有的 `Service.method` 解析路径，也让 Voyager 能正确处理图里出现的非 service-module 类型名。
+
+**Changes：**
+- `src/nexusx/voyager/voyager_context.py`: `_resolve_object` 移除 `_allowed_modules` 限制，新增 `sys.modules` 优先解析与 `ImportError` 兜底
+- `tests/test_voyager_security.py`: 重写分辨率测试，覆盖未知 service、非 service module 全限定类名、`get_source_code`、VS Code link，以及内建对象无源码时的回退行为
+
+---
+
 ## 3.2.2
 
 ### Bug Fix: 自引用 / 互引用 DTO 不再让 schema 构建栈溢出（#91）
