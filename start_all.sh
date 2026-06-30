@@ -25,8 +25,9 @@ PORT_PAG=8005
 PORT_RPC_MCP=8006
 PORT_RPC_FASTAPI=8007
 PORT_RPC_VOYAGER=8008
+PORT_ENTERPRISE_VOYAGER=8009
 
-ALL_PORTS=($PORT_DEMO $PORT_CORE_API $PORT_AUTH_GQL $PORT_AUTH_MCP $PORT_MULTI_MCP $PORT_PAG $PORT_RPC_MCP $PORT_RPC_FASTAPI $PORT_RPC_VOYAGER)
+ALL_PORTS=($PORT_DEMO $PORT_CORE_API $PORT_AUTH_GQL $PORT_AUTH_MCP $PORT_MULTI_MCP $PORT_PAG $PORT_RPC_MCP $PORT_RPC_FASTAPI $PORT_RPC_VOYAGER $PORT_ENTERPRISE_VOYAGER)
 
 PIDS=()
 
@@ -129,6 +130,10 @@ echo -e "${BLUE}Starting${NC} demo RPC Voyager on port $PORT_RPC_VOYAGER"
 uv run uvicorn demo.use_case.voyager_demo:app --port $PORT_RPC_VOYAGER &
 PIDS+=($!)
 
+echo -e "${BLUE}Starting${NC} enterprise Voyager on port $PORT_ENTERPRISE_VOYAGER"
+uv run uvicorn demo.enterprise_voyager.voyager_demo:app --port $PORT_ENTERPRISE_VOYAGER &
+PIDS+=($!)
+
 echo ""
 
 # Wait for all services to be ready
@@ -142,6 +147,7 @@ wait_for_port $PORT_PAG "demo paginated"     || true
 wait_for_port $PORT_RPC_MCP "demo RPC MCP"   || true
 wait_for_port $PORT_RPC_FASTAPI "demo RPC FastAPI" || true
 wait_for_port $PORT_RPC_VOYAGER "demo RPC Voyager" || true
+wait_for_port $PORT_ENTERPRISE_VOYAGER "enterprise Voyager" || true
 
 echo ""
 
@@ -160,6 +166,7 @@ printf "  %-20s %-8s %s\n" "demo paginated" "$PORT_PAG" "http://localhost:$PORT_
 printf "  %-20s %-8s %s\n" "demo RPC MCP" "$PORT_RPC_MCP" "http://localhost:$PORT_RPC_MCP/mcp"
 printf "  %-20s %-8s %s\n" "demo RPC FastAPI" "$PORT_RPC_FASTAPI" "http://localhost:$PORT_RPC_FASTAPI/api/sprints"
 printf "  %-20s %-8s %s\n" "demo RPC Voyager" "$PORT_RPC_VOYAGER" "http://localhost:$PORT_RPC_VOYAGER/voyager"
+printf "  %-20s %-8s %s\n" "enterprise Voyager" "$PORT_ENTERPRISE_VOYAGER" "http://localhost:$PORT_ENTERPRISE_VOYAGER/voyager"
 echo "=============================================="
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
