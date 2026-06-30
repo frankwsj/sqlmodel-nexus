@@ -26,6 +26,10 @@ export class GraphUI {
     // Highlight state snapshot for restoring after re-render
     this._lastHighlight = null // { type: 'node', name } or { type: 'edge', source, target }
 
+    // FR-013: record mousedown position on the graph container to distinguish
+    // a pure background click (→ close sidebar) from a drag (→ pan/box-select, leave sidebar alone).
+    this._bgMouseDownPos = null
+
     this._init()
   }
 
@@ -383,6 +387,14 @@ export class GraphUI {
           } else {
             self._applyNodeHighlight(this)
           }
+
+          // FR-011: when the sidebar is already open, a single click on another
+          // entity must re-point the sidebar at that entity. dblclick already
+          // fires onSchemaClick; this makes single-click follow selection too.
+          // Idempotent: re-pointing to the same entity is a no-op in the store.
+          if (self.options.isSidebarOpen && self.options.isSidebarOpen()) {
+            self._triggerCallback("onSchemaClick", event.currentTarget.dataset.name)
+          }
         })
 
         $(document)
@@ -406,12 +418,33 @@ export class GraphUI {
             }
 
             if (!isNode && self.gv) {
-              self.clearSchemaBanners()
+              // FR-013: distinguish a pure background click from a drag (pan / box-select).
+              // Only a pure click closes the sidebar + clears banners; a drag leaves the
+              // sidebar untouched. Threshold matches typical pan gestures (≥5px = drag).
+              const DRAG_THRESHOLD = 5
+              let isDrag = false
+              if (self._bgMouseDownPos) {
+                const dx = evt.clientX - self._bgMouseDownPos.x
+                const dy = evt.clientY - self._bgMouseDownPos.y
+                isDrag = Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD
+              }
+              self._bgMouseDownPos = null
 
-              if (self.options.resetCb) {
-                self.options.resetCb()
+              if (!isDrag) {
+                self.clearSchemaBanners()
+                if (self.options.resetCb) {
+                  self.options.resetCb()
+                }
               }
             }
+          })
+
+        // FR-013: record mousedown position inside the graph container so the
+        // document-level click handler above can tell click-from-drag apart.
+        $(self.selector)
+          .off("mousedown.graphui-bg")
+          .on("mousedown.graphui-bg", function (e) {
+            self._bgMouseDownPos = { x: e.clientX, y: e.clientY }
           })
       },
     })

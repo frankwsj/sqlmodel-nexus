@@ -1,6 +1,7 @@
 import SchemaCodeDisplay from "./component/schema-code-display.js"
 import RouteCodeDisplay from "./component/route-code-display.js"
 import LoaderCodeDisplay from "./component/loader-code-display.js"
+import RelatedEntitiesDisplay from "./component/related-entities-display.js"
 import Demo from "./component/demo.js"
 import RenderGraph from "./component/render-graph.js"
 import { GraphUI } from "./graph-ui.js"
@@ -43,6 +44,9 @@ const app = createApp({
         return
       }
       graphUI = new GraphUI("#graph", {
+        // FR-011: lets GraphUI know whether the sidebar is currently open, so a
+        // single click on another entity re-points the sidebar (follow selection).
+        isSidebarOpen: () => !!store.state.schemaDetail.schemaCodeName,
         onSchemaShiftClick: (id) => {
           if (store.state.graph.schemaKeys.has(id)) {
             store.state.search.mode = true
@@ -391,6 +395,7 @@ if (window.Quasar && typeof window.Quasar.setCssVar === "function") {
 app.component("schema-code-display", SchemaCodeDisplay) // double click to see node details
 app.component("route-code-display", RouteCodeDisplay) // double click to see route details
 app.component("loader-code-display", LoaderCodeDisplay) // click edge to see loader code
+app.component("related-entities-display", RelatedEntitiesDisplay) // spec 005: related entities sub-graph tab
 app.component("render-graph", RenderGraph) // for debug, render pasted dot content
 app.component("demo-component", Demo)
 

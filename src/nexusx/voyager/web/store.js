@@ -91,6 +91,17 @@ const state = reactive({
     schemaCodeName: "",
   },
 
+  // spec 005 — Related Entities sidebar tab: focused read-only sub-graph
+  // (selected entity + direct neighbors). Fed by POST /er-diagram-subgraph.
+  relatedEntities: {
+    loading: false,
+    error: null, // string | null — distinct from "no relations" (which yields a single-node dot)
+    dot: "", // last successfully rendered DOT (kept across schemaName changes to reduce flicker)
+    links: [],
+    schemas: [],
+    selectedSchema: "", // which schemaName the current dot corresponds to
+  },
+
   searchDialog: {
     show: false,
     schema: null,
@@ -400,6 +411,8 @@ const actions = {
     state.edgeDetail.sourceEntity = null
     state.edgeDetail.targetEntity = null
     state.edgeDetail.label = null
+    // spec 005 — sidebar closed → drop any cached sub-graph.
+    actions.clearRelatedEntities()
   },
 
   /**
@@ -580,6 +593,81 @@ const actions = {
       edge_minlen: state.filter.edgeMinlen,
       show_methods: state.filter.showMethods,
     }
+  },
+
+  /**
+   * spec 005 — Build payload for /er-diagram-subgraph.
+   * Reuses the same filter fields as buildErDiagramPayload so the sub-graph
+   * always matches the main graph's current rendering config (FR-015).
+   */
+  buildErDiagramSubgraphPayload(schemaName) {
+    return {
+      schema_name: schemaName,
+      show_fields: state.filter.showFields,
+      show_module: state.filter.showModule,
+      edge_minlen: state.filter.edgeMinlen,
+      show_methods: state.filter.showMethods,
+    }
+  },
+
+  /**
+   * spec 005 — Fetch the focused sub-graph for one entity + its direct neighbors.
+   * Dedups on selectedSchema; discards stale responses if selection changed mid-flight.
+   */
+  async fetchRelatedEntities(schemaName) {
+    if (!schemaName) {
+      return
+    }
+    // Already showing fresh data for this entity — skip (FR-011 idempotency on rapid clicks).
+    if (
+      state.relatedEntities.selectedSchema === schemaName &&
+      !state.relatedEntities.error &&
+      state.relatedEntities.dot
+    ) {
+      return
+    }
+    state.relatedEntities.loading = true
+    state.relatedEntities.error = null
+    state.relatedEntities.selectedSchema = schemaName
+    const payload = actions.buildErDiagramSubgraphPayload(schemaName)
+    try {
+      const res = await fetch("er-diagram-subgraph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        throw new Error(`failed with status ${res.status}`)
+      }
+      const data = await res.json()
+      // Selection changed while in flight — discard.
+      if (state.relatedEntities.selectedSchema !== schemaName) {
+        return
+      }
+      state.relatedEntities.dot = data.dot || ""
+      state.relatedEntities.links = data.links || []
+      state.relatedEntities.schemas = data.schemas || []
+    } catch (e) {
+      if (state.relatedEntities.selectedSchema === schemaName) {
+        state.relatedEntities.error = "Failed to load related entities"
+      }
+    } finally {
+      if (state.relatedEntities.selectedSchema === schemaName) {
+        state.relatedEntities.loading = false
+      }
+    }
+  },
+
+  /**
+   * spec 005 — Reset sub-graph state. Called on sidebar close / mode switch.
+   */
+  clearRelatedEntities() {
+    state.relatedEntities.loading = false
+    state.relatedEntities.error = null
+    state.relatedEntities.dot = ""
+    state.relatedEntities.links = []
+    state.relatedEntities.schemas = []
+    state.relatedEntities.selectedSchema = ""
   },
 
   /**

@@ -68,6 +68,21 @@ class ErDiagramPayload(PydanticModel):
     show_methods: bool = True
 
 
+class ErDiagramSubgraphPayload(PydanticModel):
+    """Spec 005 — request body for POST /er-diagram-subgraph.
+
+    Same rendering fields as :class:`ErDiagramPayload`, plus the required
+    ``schema_name`` of the selected entity whose one-level neighborhood should
+    be rendered as a focused read-only sub-graph in the sidebar.
+    """
+
+    schema_name: str
+    show_fields: str = "object"
+    show_module: bool = True
+    edge_minlen: int = 3
+    show_methods: bool = True
+
+
 class SourcePayload(PydanticModel):
     schema_name: str
 
@@ -156,6 +171,10 @@ def create_use_case_voyager(
     @router.post("/er-diagram")
     def get_er_diagram(payload: ErDiagramPayload):
         return ctx.get_er_diagram_data(payload.model_dump())
+
+    @router.post("/er-diagram-subgraph")
+    def get_er_diagram_subgraph(payload: ErDiagramSubgraphPayload):
+        return ctx.get_er_diagram_subgraph(payload.model_dump())
 
     @router.get("/", response_class=HTMLResponse)
     def index() -> str:
