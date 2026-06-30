@@ -205,6 +205,67 @@ class VoyagerContext:
         ]
         return {"dot": dot, "links": links_meta, "schemas": schemas_meta}
 
+    def get_er_diagram_subgraph(self, payload: dict) -> dict:
+        """Get a focused ER sub-graph for one entity + its direct neighbors.
+
+        Spec 005 — backs the "Related Entities" sidebar tab. Reuses the same
+        ``ErDiagramDotBuilder`` rendering path as :meth:`get_er_diagram_data`
+        (so show_module / show_methods / edge_minlen / show_fields have identical
+        effect), with one extra ``filter_to_neighborhood`` step after analysis.
+
+        Response shape is identical to :meth:`get_er_diagram_data`:
+        ``{"dot": str, "links": list, "schemas": list}``.
+        """
+        if not self.er_manager:
+            return {"dot": "", "links": [], "schemas": []}
+
+        schema_name = payload.get("schema_name") or ""
+        edge_minlen = max(3, min(10, payload.get("edge_minlen", 3)))
+        builder = ErDiagramDotBuilder(
+            self.er_manager,
+            show_fields=payload.get("show_fields", "object"),
+            show_module=payload.get("show_module", True),
+            theme_color=self.theme_color,
+            edge_minlen=edge_minlen,
+            show_methods=payload.get("show_methods", True),
+        )
+        builder.analysis()
+        # Unknown anchor → observably empty result (contracts/api.md).
+        if schema_name not in builder.node_set:
+            return {"dot": "", "links": [], "schemas": []}
+        builder.filter_to_neighborhood(schema_name)
+        dot = builder.render_dot()
+
+        links_meta = [
+            {
+                "source_origin": link.source_origin,
+                "target_origin": link.target_origin,
+                "label": link.label,
+                "loader_fullname": link.loader_fullname,
+            }
+            for link in builder.links
+        ]
+        schemas_meta = [
+            {
+                "id": node.id,
+                "name": node.name,
+                "module": node.module,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "type_name": f.type_name,
+                        "from_base": f.from_base,
+                        "is_object": f.is_object,
+                        "is_exclude": f.is_exclude,
+                        "desc": f.desc,
+                    }
+                    for f in node.fields
+                ],
+            }
+            for node in builder.node_set.values()
+        ]
+        return {"dot": dot, "links": links_meta, "schemas": schemas_meta}
+
     def get_index_html(self) -> str:
         """Get the index HTML content."""
         index_file = WEB_DIR / "index.html"

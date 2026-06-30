@@ -388,6 +388,7 @@
             v-if="store.state.schemaDetail.schemaCodeName"
             :schema-name="store.state.schemaDetail.schemaCodeName"
             :schemas="store.state.mode === 'er-diagram' ? store.state.erDiagramSchemas : store.state.graph.schemaMap"
+            :show-related-entities="store.state.mode === 'er-diagram'"
           ></schema-code-display
           ><loader-code-display
             v-else-if="store.state.edgeDetail.loaderFullname"

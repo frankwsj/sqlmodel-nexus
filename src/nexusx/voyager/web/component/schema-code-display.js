@@ -16,6 +16,8 @@ export default defineComponent({
     schemas: { type: Object, default: () => ({}) },
     // visibility from parent (e.g., dialog v-model)
     modelValue: { type: Boolean, default: true },
+    // spec 005 — show the "Related Entities" tab (only meaningful in ER-diagram mode)
+    showRelatedEntities: { type: Boolean, default: false },
   },
   setup(props, { emit }) {
     const code = ref("")
@@ -50,6 +52,10 @@ export default defineComponent({
       link.value = ""
       error.value = null
       fields.value = []
+      // FR-012 (spec 005): intentionally NOT resetting `tab` here. Switching the
+      // selected entity must preserve the active tab so users can compare the
+      // same view (Fields / Source Code / Related Entities) across entities.
+      // Do NOT uncomment `tab.value = "fields"` without changing this contract.
       // tab.value = "fields";
       loading.value = true
     }
@@ -146,7 +152,7 @@ export default defineComponent({
       }
     })
 
-    return { link, code, error, fields, tab, loading }
+    return { link, code, error, fields, tab, loading, showRelatedEntities: props.showRelatedEntities }
   },
   template: `
   <div class="frv-code-display" style="border: 1px solid #ccc; border-left: none; position:relative; height:100%; background:#fff;">
@@ -164,6 +170,7 @@ export default defineComponent({
         <q-tabs v-model="tab" align="left" dense active-color="primary" indicator-color="primary" class="text-grey-8">
           <q-tab name="fields" label="Fields" />
           <q-tab name="source" label="Source Code" />
+          <q-tab v-if="showRelatedEntities" name="related" label="Related Entities" />
         </q-tabs>
       </div>
       <q-separator />
@@ -195,6 +202,12 @@ export default defineComponent({
           </div>
           <div v-show="tab === 'source'">
             <pre style="margin:0;"><code class="language-python">{{ code }}</code></pre>
+          </div>
+          <div v-show="tab === 'related'" style="height: calc(100vh - 220px); min-height: 300px;">
+            <related-entities-display
+              :schema-name="schemaName"
+              :visible="tab === 'related' && modelValue"
+            ></related-entities-display>
           </div>
         </template>
       </div>

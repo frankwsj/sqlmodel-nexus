@@ -245,3 +245,43 @@ class ErDiagramDotBuilder:
             list(self.node_set.values()),
             self.links,
         )
+
+    def filter_to_neighborhood(self, schema_name: str) -> None:
+        """Narrow the built graph to ``schema_name`` + its direct neighbors + the
+        edges incident to ``schema_name``. Call this AFTER :meth:`analysis`.
+
+        Spec 005 FR-002 / FR-014 — the result is the "Related Entities" sub-graph
+        rendered in the sidebar tab. Mutates ``node_set`` / ``links`` / ``link_set``
+        in place.
+
+        - Unknown ``schema_name`` (not in ``node_set``): everything is cleared so
+          the caller produces an observably empty result.
+        - Isolated entity (no incident edges): ``node_set`` keeps only
+          ``schema_name`` itself; ``links`` becomes empty. (FR-005.)
+        - Self-references (``X → X``) and parallel edges are preserved. (FR-010.)
+        - Edges between two *neighbors* (neither endpoint is ``schema_name``) are
+          excluded — the sub-graph shows relationships OF the selected entity, not
+          relationships among its neighborhood.
+        """
+        if schema_name not in self.node_set:
+            self.node_set = {}
+            self.links = []
+            self.link_set = set()
+            return
+
+        kept_links: list[Link] = []
+        for link in self.links:
+            if link.source_origin == schema_name or link.target_origin == schema_name:
+                kept_links.append(link)
+
+        neighbor_ids: set[str] = {schema_name}
+        for link in kept_links:
+            neighbor_ids.add(link.source_origin)
+            neighbor_ids.add(link.target_origin)
+
+        self.node_set = {
+            nid: node for nid, node in self.node_set.items() if nid in neighbor_ids
+        }
+        self.links = kept_links
+        # link_set is only consulted during analysis() for dedup; reset to stay consistent.
+        self.link_set = set()
